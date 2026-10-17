@@ -1,0 +1,172 @@
+name: nightly-pack
+
+# Two jobs, so the signing key never sits next to code that reads strangers' data.
+#
+#   build  no secrets, read-only token. Code comes from `main`; contributions come from the `inbox` branch into
+#          the folder `data/`, which is only ever read as JSON files, never executed or imported. It reads the live
+#          release (public) so the gate can compare against it, builds the bundle parts (memory, adapter, check,
+#          catalog-extra) and uploads them with an UNSIGNED manifest and STATUS.md as a workflow artifact.
+#   sign   environment `pack-signing` (holds PACK_SIGNING_KEY). Installs only the signing library, re-checks the
+#          artifact (every part's sha256, size and format, run number, time), signs manifest.json and publishes the
+#          release. A bundle the gate did not approve is published as a pre-release, so the "latest" release
+#          is always the live bundle. STATUS.md and status.json go to the rolling `status` pre-release.
+#
+# Optional, only when this repo is private and packs go to a separate public repo:
+#   variable PACK_RELEASE_REPO (owner/name) and secret PACK_RELEASE_TOKEN (contents: write on that repo only).
+# All actions are pinned to commit SHAs; python packages to exact versions with hashes.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-pack
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    env:
+      RELEASE_REPO: ${{ vars.PACK_RELEASE_REPO || github.repository }}
+    steps:
+      # Code: the default branch only, never the inbox.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Look for the inbox branch
+        id: inbox
+        run: |
+          if git ls-remote --exit-code --heads "https://github.com/${GITHUB_REPOSITORY}.git" inbox >/dev/null; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            mkdir -p data
+          fi
+
+      # Data: read as files only. Nothing under data/ is run, imported or installed.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.inbox.outputs.present == 'true'
+        with:
+          ref: inbox
+          path: data
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --require-hashes -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s tests
+
+      - name: Cache pinned model and catalog
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: assets
+          key: assets-${{ hashFiles('pins.json') }}
+
+      - name: Fetch model and catalog (sha256 pinned in pins.json)
+        run: python scripts/fetch_assets.py --pins pins.json --out assets
+
+      # The latest (non-pre-)release is the live bundle; the rolling `status` release keeps STATUS history.
+      - name: Fetch the live bundle and status history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p live live-status
+          gh release download --repo "${RELEASE_REPO}" --dir live || echo "no live bundle yet"
+          gh release download status --repo "${RELEASE_REPO}" --pattern status.json --dir live-status || echo "no status history yet"
+
+      - name: Build bundle
+        id: meta
+        run: |
+          tag="pack-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          python -m pipeline.run \
+            --data data --assets assets --out out --pins pins.json \
+            --regression regression.npz --seq "${GITHUB_RUN_NUMBER}" \
+            --live-dir live --status-history live-status/status.json --seed seed.npz \
+            --base-url "https://github.com/${RELEASE_REPO}/releases/download/${tag}/"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pack
+          path: |
+            out/community-pack.bin
+            out/adapter.bin
+            out/check.bin
+            out/catalog-extra.bin
+            out/manifest.json
+            out/summary.json
+            out/STATUS.md
+            out/status.json
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: pack-signing
+    permissions:
+      contents: write
+    env:
+      RELEASE_REPO: ${{ vars.PACK_RELEASE_REPO || github.repository }}
+      TAG: ${{ needs.build.outputs.tag }}
+      GH_TOKEN: ${{ secrets.PACK_RELEASE_TOKEN || github.token }}
+    steps:
+      # Only the signer and its pinned requirements, from the default branch.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/sign_release.py
+            requirements-sign.txt
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install --require-hashes -r requirements-sign.txt
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pack
+          path: out
+
+      - name: Verify and sign
+        env:
+          PACK_SIGNING_KEY: ${{ secrets.PACK_SIGNING_KEY }}
+        run: |
+          python scripts/sign_release.py --dir out --run-number "${GITHUB_RUN_NUMBER}" \
+            --base-url "https://github.com/${RELEASE_REPO}/releases/download/${TAG}/"
+
+      # Only the parts the verified manifest lists are published.
+      - name: Publish release
+        run: |
+          files=$(python -c "import json,os; m=json.load(open('out/manifest.json')); print(*['out/'+os.path.basename(a['url']) for a in m['assets'].values()])")
+          improved=$(python -c "import json; print(str(json.load(open('out/manifest.json'))['improved']).lower())")
+          flags=""
+          [ "${improved}" = "true" ] || flags="--prerelease"
+          gh release create "${TAG}" ${files} out/manifest.json out/manifest.sig ${flags} \
+            --repo "${RELEASE_REPO}" \
+            --title "Bundle ${TAG}" \
+            --notes "Built from the inbox branch; see manifest.json for the parts and scores. Pre-releases were not approved by the gate."
+
+      - name: Publish status
+        run: |
+          gh release view status --repo "${RELEASE_REPO}" >/dev/null 2>&1 || \
+            gh release create status --repo "${RELEASE_REPO}" --prerelease --title "Learning status" --notes "STATUS.md and status.json, rewritten nightly."
+          gh release upload status out/STATUS.md out/status.json --clobber --repo "${RELEASE_REPO}"

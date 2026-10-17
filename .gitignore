@@ -1,0 +1,4 @@
+assets/
+out/
+__pycache__/
+*.pem
