@@ -2,3 +2,9 @@ assets/
 out/
 __pycache__/
 *.pem
+data/
+runs/
+train/out/
+*.pt
+*.safetensors
+.venv-gpu/
