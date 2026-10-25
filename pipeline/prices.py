@@ -8,7 +8,7 @@ gives a card.
 Two keys sit beside it, keyed by catalog id (the release meta.json, pinned by CATALOG_PIN
 and fetched here, not in pins.json, so a failed download fails only this step);
 builds that only read ``v``, ``updatedAt`` and ``prices`` ignore them:
-- ``stamped``: rows ``{catalogId, stamp, productId, subtype, market, mid, low}`` for stamped
+- ``stamped``: rows ``{catalogId, stamp, tag, productId, subtype, market, mid, low}`` for stamped
   products (see pipeline/stamps.py), each joined to exactly one catalog card.
 - ``byCatalog``: ``{catalogId: {subtype: price}}`` for the ex10-ex16 set-logo-stamp sets.
 """
@@ -178,6 +178,8 @@ def collect_snapshot(
         keys = [(r["catalogId"], r["stamp"], r["subtype"]) for r in rows]
         report["missingProducts"] = missing_products
         report["collisions"] = len(keys) - len(set(keys))
+        tagged = [(r["catalogId"], r["stamp"], r["subtype"], r["tag"]) for r in rows]
+        report["collisionsWithTag"] = len(tagged) - len(set(tagged))
         if len(rows) < min_stamped:
             raise ValueError(f"price snapshot has {len(rows)} stamped rows, need {min_stamped}")
         if len(by_catalog) < min_by_catalog:

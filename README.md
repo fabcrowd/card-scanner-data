@@ -202,7 +202,7 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
 ```
 { "v": 1, "updatedAt": "YYYY-MM-DDTHH:MM:SSZ",
   "prices": { "<TCGPlayer productId>": { "<subTypeName>": price } },
-  "stamped": [ { "catalogId", "stamp", "productId", "subtype", "market", "mid", "low" } ],
+  "stamped": [ { "catalogId", "stamp", "tag", "productId", "subtype", "market", "mid", "low" } ],
   "byCatalog": { "<catalogId>": { "<subTypeName>": price } } }
 ```
 
@@ -217,8 +217,10 @@ fails only the price step (yesterday's `prices.json` stays) and never the learni
   `championship`, `league`, `pokemoncenter`, `wstamp`, `setlogo` ("(<TCGdex set name> Stamp)") and `playpokemon` (every
   product in the Prize Pack group). A product is kept only when its name and number (promo prefix, SVP number, or
   printed total from TCGdex `cardCount.official`) pick exactly one catalog card. `market`, `mid` or `low` is `null`
-  when TCGplayer has none. Several products can share a card, stamp and subtype (different events or placements, left
-  and right stamps); `productId` tells them apart.
+  when TCGplayer has none. `tag` is the text of every "(...)" and "[...]" tag after the product's number, accents
+  removed (for example "League Challenge 1st Place", "Prize Pack Series 6", "Left Stamp", "Cosmos Holo"), or `null`
+  when there is none. Several products can share a card, stamp and subtype (different events or placements, left and
+  right stamps); `tag` tells them apart, and `productId` always does.
 - `byCatalog`: ex10-ex16, whose reverse holos all carry the set logo: each card's subtypes from its TCGplayer group,
   joined by number and name, so cards TCGdex has no product id for still get a price.
 

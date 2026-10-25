@@ -63,6 +63,29 @@ def base_name(name: str) -> str:
     return _TAGS.sub("", name).split(" - ")[0].strip()
 
 
+def _after_number(name: str) -> str | None:
+    """The text after the first " - " that is outside every "(...)" and "[...]", or None."""
+    depth = 0
+    for i, c in enumerate(name):
+        if c in "([":
+            depth += 1
+        elif c in ")]":
+            depth = max(0, depth - 1)
+        elif depth == 0 and name.startswith(" - ", i):
+            return name[i + 3:]
+    return None
+
+
+def stamp_tag(name: str) -> str | None:
+    """Every tag after the number, as plain text: "Tsareena - 20/149 (League Challenge) [1st Place]" gives
+    "League Challenge 1st Place". Tags before the number ("Boss's Orders [Cyrus] - ...") are part of the name."""
+    after = _after_number(name)
+    found = [m.group(1) if m.group(1) is not None else m.group(2) for m in _TAG.finditer(name if after is None else after)]
+    text = unicodedata.normalize("NFD", " ".join(found))
+    text = " ".join("".join(c for c in text if not unicodedata.combining(c)).split())
+    return text or None
+
+
 def tags(name: str) -> list[str]:
     """Folded text of every "(...)" and "[...]" tag in a product name."""
     return [_fold(m.group(1) if m.group(1) is not None else m.group(2)) for m in _TAG.finditer(name)]
@@ -222,12 +245,13 @@ def stamped_rows(catalog: Catalog, group_id: int, products_payload: dict, prices
             _count(report, "stamped", stamp, "ambiguous" if ids else "unmatched")
             continue
         _count(report, "stamped", stamp, "joined")
+        tag = stamp_tag(product["name"])
         rows = []
         for row in prices.get(product["productId"], []):
             market, mid, low = (_money(row.get(k)) for k in ("marketPrice", "midPrice", "lowPrice"))
             if market is None and mid is None and low is None:
                 continue
-            rows.append({"catalogId": ids[0], "stamp": stamp, "productId": product["productId"],
+            rows.append({"catalogId": ids[0], "stamp": stamp, "tag": tag, "productId": product["productId"],
                          "subtype": row["subTypeName"], "market": market, "mid": mid, "low": low})
         _count(report, "stamped", stamp, "rows" if rows else "unpriced", len(rows) or 1)
         out += rows
