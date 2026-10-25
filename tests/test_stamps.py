@@ -108,6 +108,23 @@ class StampTags(unittest.TestCase):
             ("Ace Trainer - 69/98 (International Challenge)", None),
         ])
 
+    def test_the_tag_is_the_text_of_the_tags_after_the_number(self):
+        for name, want in [
+            ("Tsareena - 20/149 (League Challenge) [1st Place]", "League Challenge 1st Place"),
+            ("Teal Mask Ogerpon ex - 025/167 (Prize Pack Series 6)", "Prize Pack Series 6"),
+            ("Zekrom ex - 034/086 (Left Stamp)", "Left Stamp"),
+            ("Bibarel - 121/172 (Cosmos Holo)", "Cosmos Holo"),
+            ("Boss's Orders [Cyrus] - 132/172 (Cosmos Holo)", "Cosmos Holo"),
+            ("Metal Energy (Special) - 80/90 (League Promo)", "League Promo"),
+            ("Magneton - 159 (Pok\u00e9mon Center Exclusive)", "Pokemon Center Exclusive"),
+            ("Raikou - SM150 (Prerelease)  (Staff)", "Prerelease Staff"),
+            ("Pikachu [W Stamped]", "W Stamped"),
+            ("Larvitar (Delta Species Stamp)", "Delta Species Stamp"),
+            ("Kricketune V - 006/163", None),
+            ("Boss's Orders [Cyrus] - 132/172", None),
+        ]:
+            self.assertEqual(stamps.stamp_tag(name), want, name)
+
     def test_base_name_drops_every_tag_then_the_number(self):
         self.assertEqual(stamps.base_name("Deoxys (Delta Species - Attack Forme)"), "Deoxys")
         self.assertEqual(stamps.base_name("Boss's Orders [Cyrus] - 132/172 (Regional Championships)"), "Boss's Orders")
@@ -151,22 +168,31 @@ class Join(unittest.TestCase):
 
 
 class StampedRows(unittest.TestCase):
-    def test_rows_carry_the_catalog_id_stamp_product_and_three_prices(self):
+    def test_rows_carry_the_catalog_id_stamp_tag_product_and_three_prices(self):
         rows, _, _ = run_groups(catalog())
-        self.assertIn({"catalogId": "bwp-BW48", "stamp": "staff", "productId": 96566, "subtype": "Holofoil",
-                       "market": 350.0, "mid": 229.99, "low": 229.99}, rows)
-        self.assertIn({"catalogId": "bwp-BW48", "stamp": "prerelease", "productId": 83520, "subtype": "Holofoil",
-                       "market": 45.43, "mid": 109.99, "low": 54.0}, rows)
-        self.assertIn({"catalogId": "swshp-SWSH240", "stamp": "staff", "productId": 680245, "subtype": "Holofoil",
-                       "market": None, "mid": 99.0, "low": 99.0}, rows)
-        self.assertIn({"catalogId": "sv08.5-075", "stamp": "setlogo", "productId": 618089, "subtype": "Holofoil",
-                       "market": 8.83, "mid": 9.99, "low": 7.96}, rows)
-        self.assertIn({"catalogId": "hgss2-78", "stamp": "league", "productId": 123183, "subtype": "Reverse Holofoil",
-                       "market": 106.33, "mid": 208.0, "low": 179.99}, rows)
-        self.assertIn({"catalogId": "basep-51", "stamp": "pokemoncenter", "productId": 244347, "subtype": "Normal",
-                       "market": 119.87, "mid": 207.0, "low": 199.99}, rows)
-        self.assertIn({"catalogId": "swsh5-6", "stamp": "playpokemon", "productId": 475973, "subtype": "Holofoil",
-                       "market": 4.51, "mid": 5.39, "low": 4.49}, rows)
+        self.assertIn({"catalogId": "bwp-BW48", "stamp": "staff", "tag": "Prerelease Staff", "productId": 96566,
+                       "subtype": "Holofoil", "market": 350.0, "mid": 229.99, "low": 229.99}, rows)
+        self.assertIn({"catalogId": "bwp-BW48", "stamp": "prerelease", "tag": "Prerelease", "productId": 83520,
+                       "subtype": "Holofoil", "market": 45.43, "mid": 109.99, "low": 54.0}, rows)
+        self.assertIn({"catalogId": "swshp-SWSH240", "stamp": "staff", "tag": "Prerelease Staff", "productId": 680245,
+                       "subtype": "Holofoil", "market": None, "mid": 99.0, "low": 99.0}, rows)
+        self.assertIn({"catalogId": "sv08.5-075", "stamp": "setlogo", "tag": "Prismatic Evolutions Stamp", "productId": 618089,
+                       "subtype": "Holofoil", "market": 8.83, "mid": 9.99, "low": 7.96}, rows)
+        self.assertIn({"catalogId": "hgss2-78", "stamp": "league", "tag": "League Promo", "productId": 123183,
+                       "subtype": "Reverse Holofoil", "market": 106.33, "mid": 208.0, "low": 179.99}, rows)
+        self.assertIn({"catalogId": "basep-51", "stamp": "pokemoncenter", "tag": "Pokemon Center NY", "productId": 244347,
+                       "subtype": "Normal", "market": 119.87, "mid": 207.0, "low": 199.99}, rows)
+        self.assertIn({"catalogId": "swsh5-6", "stamp": "playpokemon", "tag": None, "productId": 475973,
+                       "subtype": "Holofoil", "market": 4.51, "mid": 5.39, "low": 4.49}, rows)
+
+    def test_products_sharing_a_card_stamp_and_subtype_differ_by_tag(self):
+        rows, _, _ = run_groups(catalog())
+        tsareena = sorted(r["tag"] for r in rows if r["catalogId"] == "sm1-20")
+        self.assertEqual(tsareena, ["League Challenge 1st Place", "League Challenge 2nd Place"])
+        zekrom = sorted(r["tag"] for r in rows if r["catalogId"] == "sv10.5b-034")
+        self.assertEqual(zekrom, ["Left Stamp", "Right Stamp"])
+        keys = [(r["catalogId"], r["stamp"], r["subtype"], r["tag"]) for r in rows]
+        self.assertEqual(len(keys), len(set(keys)))
 
     def test_unstamped_products_and_trainer_cards_give_no_row(self):
         rows, _, _ = run_groups(catalog())

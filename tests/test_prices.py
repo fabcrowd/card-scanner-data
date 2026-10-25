@@ -125,7 +125,8 @@ class StampedSnapshot(unittest.TestCase):
         rows = snapshot["stamped"]
         keys = [(r["catalogId"], r["stamp"], r["productId"], r["subtype"]) for r in rows]
         self.assertEqual(keys, sorted(keys))
-        self.assertIn({"catalogId": "svp-027", "stamp": "pokemoncenter", "productId": 500264, "subtype": "Holofoil",
+        self.assertIn({"catalogId": "svp-027", "stamp": "pokemoncenter", "tag": "Pokemon Center Exclusive",
+                       "productId": 500264, "subtype": "Holofoil",
                        "market": 161.94, "mid": 166.1, "low": 99.99}, rows)
         self.assertEqual(snapshot["byCatalog"]["ex13-3"], {"Holofoil": 82.37, "Reverse Holofoil": 1498.99})
 
@@ -148,6 +149,7 @@ class StampedSnapshot(unittest.TestCase):
         self.assertEqual(report["byCatalog"]["ex15"]["joined"], 5)
         self.assertEqual(report["missingProducts"], 0)
         self.assertGreaterEqual(report["collisions"], 1)
+        self.assertEqual(report["collisionsWithTag"], 0)
 
     def test_the_size_cap_covers_the_new_keys(self):
         size = len(json.dumps(collect(), separators=(",", ":"), sort_keys=True).encode("utf-8"))
