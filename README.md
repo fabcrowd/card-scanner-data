@@ -192,6 +192,36 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
    cards; wrong "high" answers not up). The gate in `pipeline/gate.py` decides the rest. A bundle the gate did not
    approve is published as a pre-release, so "latest" is always the live bundle. `STATUS.md` and `status.json` go to
    the rolling `status` pre-release (the data repo's `main` is admin-only, so the nightly never commits there).
+   The same night writes `prices.json` (`python -m pipeline.prices`, TCGPlayer's daily public snapshot) and the sign
+   job publishes it on the rolling `prices` pre-release. It is not a bundle part and not gated on `improved`, so a
+   night the gate rejects still updates prices, and `latest` stays the live learning bundle. The extension downloads
+   that one file; installs do not fetch prices themselves. A failed price fetch does not fail the pack.
+
+### prices.json (v1)
+
+```
+{ "v": 1, "updatedAt": "YYYY-MM-DDTHH:MM:SSZ",
+  "prices": { "<TCGPlayer productId>": { "<subTypeName>": price } },
+  "stamped": [ { "catalogId", "stamp", "productId", "subtype", "market", "mid", "low" } ],
+  "byCatalog": { "<catalogId>": { "<subTypeName>": price } } }
+```
+
+Source: tcgcsv.com, every group's `/prices` and `/products`, sequential, one pass. `price` is the market price, else
+mid. `prices` is joined by the extension only through the product id TCGdex gives a card; builds that read only `v`,
+`updatedAt` and `prices` ignore the other keys, and every build rejects a file over 8,000,000 characters.
+`catalogId` is a card id of the release `meta.json` pinned in `pins.json`.
+
+- `stamped`: products whose name carries an exact stamp tag (`pipeline/stamps.py`): `staff`, `prerelease`,
+  `championship`, `league`, `pokemoncenter`, `wstamp`, `setlogo` ("(<TCGdex set name> Stamp)") and `playpokemon` (every
+  product in the Prize Pack group). A product is kept only when its name and number (promo prefix, SVP number, or
+  printed total from TCGdex `cardCount.official`) pick exactly one catalog card. `market`, `mid` or `low` is `null`
+  when TCGplayer has none. Several products can share a card, stamp and subtype (different events or placements, left
+  and right stamps); `productId` tells them apart.
+- `byCatalog`: ex10-ex16, whose reverse holos all carry the set logo: each card's subtypes from its TCGplayer group,
+  joined by number and name, so cards TCGdex has no product id for still get a price.
+
+The job log prints the join counts per stamp and per set. Fewer than 1000 products or stamped rows, or fewer than 500
+`byCatalog` cards, is refused, so a bad night leaves the published file in place.
 
 ### manifest.json (v2)
 

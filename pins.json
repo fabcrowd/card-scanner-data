@@ -3,6 +3,7 @@
   "assets": [
     { "name": "clip_visual_int8.onnx", "release": "v2.0", "sha256": "77538aade655907f58db20510909210f52c45dc858a9d05ffce7420b62b59689" },
     { "name": "catalog.bin.gz", "release": "v2.0", "sha256": "2f3c50cec84937ff63ae5196da040e441599a5df6f28de829db79dd2b2dd7e13" },
+    { "name": "meta.json", "release": "v2.0", "sha256": "5febdc04fa74a456b80f6f322bc58fd22f1c4bb5e685abda3c50a12edfd88866" },
     { "name": "id_map.json", "release": "v2.0", "sha256": "2d60e5a300369d36bd512d750819eb720c470f1a58bce3018cfef320aeee335f" }
   ],
   "dim": 512,
