@@ -1,4 +1,5 @@
 """The nightly price file: prices keyed by TCGPlayer product id, plus stamped rows and EX prices keyed by catalog id."""
+import hashlib
 import json
 import os
 import tempfile
@@ -156,13 +157,50 @@ class StampedSnapshot(unittest.TestCase):
         # lib/price-snapshot.js MAX_SNAPSHOT_CHARS: a bigger file is rejected whole by every install.
         self.assertLessEqual(prices.MAX_SNAPSHOT_BYTES, 8_000_000)
 
-    def test_the_join_catalog_is_the_pinned_release_meta_json(self):
+class PinnedCatalog(unittest.TestCase):
+    META = json.dumps(fixture("catalog-meta.json")).encode("utf-8")
+
+    def pin(self, data=META):
+        return {"url": "https://example.test/meta.json", "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+
+    def test_the_price_step_has_its_own_pin_and_the_pack_assets_do_not_list_it(self):
+        pin = prices.CATALOG_PIN
+        self.assertEqual(pin["url"], "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.0/meta.json")
+        self.assertRegex(pin["sha256"], r"^[0-9a-f]{64}$")
+        self.assertGreater(pin["bytes"], 0)
         with open(os.path.join(_paths.ROOT, "pins.json"), encoding="utf-8") as f:
             pins = json.load(f)
-        meta = [a for a in pins["assets"] if a["name"] == "meta.json"]
-        self.assertEqual(len(meta), 1)
-        self.assertRegex(meta[0]["sha256"], r"^[0-9a-f]{64}$")
-        self.assertEqual(prices.DEFAULT_CATALOG, os.path.join("assets", "meta.json"))
+        # A failed price download must never stop the pack: fetch_assets and pipeline.run check every pins.json asset.
+        self.assertNotIn("meta.json", [a["name"] for a in pins["assets"]])
+
+    def test_a_verified_download_gives_the_card_rows(self):
+        seen = []
+
+        def get_bytes(url, limit):
+            seen.append((url, limit))
+            return self.META
+
+        cards = prices.fetch_catalog(get_bytes, self.pin())
+        self.assertEqual(cards, fixture("catalog-meta.json"))
+        self.assertEqual(seen, [("https://example.test/meta.json", len(self.META))])
+
+    def test_a_hash_or_size_mismatch_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "sha256"):
+            prices.fetch_catalog(lambda url, limit: self.META, {**self.pin(), "sha256": "0" * 64})
+        with self.assertRaisesRegex(ValueError, "bytes"):
+            prices.fetch_catalog(lambda url, limit: self.META, {**self.pin(), "bytes": len(self.META) + 1})
+
+    def test_a_failed_download_is_refused(self):
+        def down(url, limit):
+            raise prices.Missing(url)
+
+        with self.assertRaises(prices.Missing):
+            prices.fetch_catalog(down, self.pin())
+
+    def test_a_catalog_that_is_not_a_list_is_refused(self):
+        data = b'{"cards": []}'
+        with self.assertRaisesRegex(ValueError, "list"):
+            prices.fetch_catalog(lambda url, limit: data, self.pin(data))
 
 
 if __name__ == "__main__":
