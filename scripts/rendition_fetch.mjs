@@ -112,11 +112,11 @@ try {
         for (const [tag, u] of cfg.renditions(urls[k])) {
           const res = await getBytes(u, L.url);
           const ct = res.headers()['content-type'] || '';
-          if (!res.ok() || !ct.startsWith('image/')) { got.push({ tag, u, status: res.status(), ct }); continue; }
+          if (!res.ok() || !(ct.startsWith('image/') || ct === 'application/octet-stream')) { got.push({ tag, u, status: res.status(), ct }); continue; }
           const buf = await res.body();
           const meta = await sharp(buf).metadata();
           const d = ham(lh, await dhash(buf));
-          const ext = (ct.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+          const ext = (meta.format || 'jpeg').replace('jpeg', 'jpg');
           const f = `${id}/photo-${n}__${tag}.${ext}`;
           if (site === 'craigslist' && tag === '50x50c') { got.push({ tag, u, status: 200, w: meta.width, h: meta.height, d, file: null }); continue; }
           if (d > DHASH_MAX) { got.push({ tag, u, status: res.status(), w: meta.width, h: meta.height, d, mismatch: true }); bad = true; break; }

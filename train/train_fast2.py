@@ -65,7 +65,7 @@ def train_step(student_c, teacher_c, large, deg, gid, catv, grp, w_ce, device):
     return torch.stack([loss.detach(), l_dist.detach(), l_drift.detach(), l_ce.detach()])
 
 
-def autotune(student, student_c, teacher_c, cards, gid_cat, catv, grp, w_ce, device, rng):
+def autotune(student, student_c, teacher_c, cards, gid_cat, catv, grp, w_ce, device, rng, mix="none"):
     """Images/s per candidate (3 images per sample); step up only if >5% faster and peak VRAM < limit."""
     best, best_ips = None, 0.0
     for b in AUTOTUNE_CANDIDATES:
@@ -78,7 +78,7 @@ def autotune(student, student_c, teacher_c, cards, gid_cat, catv, grp, w_ce, dev
                     torch.cuda.synchronize()
                     t0 = time.time()
                 pos = torch.from_numpy(rng.choice(len(cards), b, replace=False)).to(device)
-                large, deg, _, _ = G2.make_batch(cards[pos], rng, device)
+                large, deg, _, _ = G2.make_batch(cards[pos], rng, device, mix)
                 opt.zero_grad(set_to_none=True)
                 train_step(student_c, teacher_c, large, deg, gid_cat[pos], catv, grp, w_ce, device)
                 opt.step()
@@ -125,6 +125,18 @@ def load_real(cat, name_of, eval_rows, k2g, device, args=None):
         rep["would_have_dropped_by_name_leakage_filter"] = int(sum(1 for k, n, r in zip(range(len(names)), names, rows)
                                                                     if G.norm_name(n) in ev_norm or G.norm_name(r["name"]) in ev_norm))
     rep["exclusion"] = excl_rep
+    if args is not None and args.holdout:  # fastEho: drop real crops labelled with a held-out card (id rows by id, name rows by H name)
+        ho = set(json.load(open(args.holdout, encoding="utf-8"))["ids"])
+        h_names = {G.norm_name(name_of[row_of[c]]) for c in ho if name_of[row_of[c]]}
+        drop = np.array([(r["level"] == "id" and r["train_id"] in ho) or (r["level"] == "name" and G.norm_name(n) in h_names)
+                         for r, n in zip(rows, names)])
+        rep["holdout_dropped_id_level"] = int(sum(1 for r, k, d in zip(rows, keep, drop) if k and d and r["level"] == "id"))
+        rep["holdout_dropped_name_level"] = int(sum(1 for r, k, d in zip(rows, keep, drop) if k and d and r["level"] == "name"))
+        gid_full = np.full(len(rows), -1, dtype=np.int64)
+        gid_full[np.flatnonzero(keep)] = gid
+        keep = keep & ~drop
+        gid = gid_full[keep]
+        rep["used"] = int(keep.sum())
     rep["per_pack_leakage"] = {pk: {"candidates": sum(1 for r in rows if r["pack"] == pk),
                                     "used": sum(1 for r, k in zip(rows, keep) if k and r["pack"] == pk)}
                                for pk in dict.fromkeys(r["pack"] for r in rows)}
@@ -171,6 +183,13 @@ def train(args):
         cards_cpu, rows_np, rep = load_all_cards(cat, args.cards_cache)
     else:
         cards_cpu, rows_np, rep = G.load_training_cards(cat, name_of, eval_rows, os.path.join(OUT, "split.json"))
+    if args.holdout:
+        row_of_ = {c: i for i, c in enumerate(cat.ids)}
+        ho_rows = np.array([row_of_[c] for c in json.load(open(args.holdout, encoding="utf-8"))["ids"]])
+        k_ = np.flatnonzero(~np.isin(rows_np, ho_rows))
+        rep["holdout_removed"] = int(len(rows_np) - len(k_))
+        cards_cpu, rows_np = cards_cpu.index_select(0, torch.from_numpy(k_)), rows_np[k_]
+        rep["trained_cards_after_holdout"] = int(len(rows_np))
     print("training cards:", json.dumps(rep), flush=True)
     cards = cards_cpu.to(device)
     catv = torch.from_numpy(cat.vectors).to(device)
@@ -185,7 +204,7 @@ def train(args):
 
     model, teacher, student, ema = P.build_models(device)
     student_c, teacher_c, compile_status = T.try_compile(student, teacher, device)
-    batch = int(args.batch) if args.batch != "auto" else autotune(student, student_c, teacher_c, cards, gid_cat, catv, grp, args.w_ce, device, rng)
+    batch = int(args.batch) if args.batch != "auto" else autotune(student, student_c, teacher_c, cards, gid_cat, catv, grp, args.w_ce, device, rng, args.degrade_mix)
     n_real = batch * 1 // 4 if args.real else 0
     n_cat = batch - n_real
     steps_per_epoch = len(cards) // batch
@@ -213,7 +232,7 @@ def train(args):
             if args.real:
                 ri = torch.from_numpy(real_stream.take(n_real)).to(device)
                 x, gid = torch.cat([x, real[ri]]), torch.cat([gid, gid_real[ri]])
-            large, deg, hs, _ = G2.make_batch(x, rng, device)
+            large, deg, hs, _ = G2.make_batch(x, rng, device, args.degrade_mix)
             opt.zero_grad(set_to_none=True)
             losses = train_step(student_c, teacher_c, large, deg, gid, catv, grp, args.w_ce, device)
             opt.step()
@@ -240,7 +259,7 @@ def train(args):
     torch.cuda.synchronize()
     train_s = time.time() - t0
     hs_arr = np.array(hs_seen)
-    metrics = {"arm": args.name, "real": args.real, "real_report": real_rep, "w_ce": args.w_ce, "batch": batch, "batch_catalog": n_cat,
+    metrics = {"arm": args.name, "real": args.real, "degrade_mix": args.degrade_mix, "real_report": real_rep, "w_ce": args.w_ce, "batch": batch, "batch_catalog": n_cat,
                "batch_real": n_real, "ce_variant": "no no_negative masks; name-group positives for every sample",
                "train_seconds": train_s, "train_it_s": step / train_s, "gpu_images_per_s": 3 * batch * step / train_s,
                "peak_vram_gib": torch.cuda.max_memory_allocated() / 2**30, "compile": compile_status,
@@ -395,6 +414,9 @@ def main():
     ap.add_argument("--real-cache", default=None, help="separate real-crop cache path (fastD)")
     ap.add_argument("--all-physical", action="store_true", help="fastE: all physical-card ids, name filter off for real crops, harvest eval dirs excluded")
     ap.add_argument("--cards-cache", default=os.path.join(OUT, "cache", "cards320_all.pt"))
+    ap.add_argument("--holdout", default=None, help="fastEho: json with 'ids' held out of catalog-art training and the real-crop pool")
+    ap.add_argument("--degrade-mix", choices=("none", "cdn50"), default="none",
+                    help="G1: cdn50 = student degradation is a 50/50 per-sample mixture of the synthetic degrader and a CDN-realistic one")
     ap.add_argument("--no-epoch-eval", action="store_true", help="skip the background int8 eval of epochs 1..N-1")
     ap.add_argument("--w-ce", type=float, default=0.1)
     ap.add_argument("--epochs", type=int, default=8)
