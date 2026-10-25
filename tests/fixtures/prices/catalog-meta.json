@@ -1,0 +1,326 @@
+[
+{
+"id": "base1-58",
+"name": "Pikachu",
+"setCode": "base1",
+"number": "58"
+},
+{
+"id": "base2-1",
+"name": "Clefable",
+"setCode": "base2",
+"number": "1"
+},
+{
+"id": "base2-27",
+"name": "Snorlax",
+"setCode": "base2",
+"number": "27"
+},
+{
+"id": "base2-60",
+"name": "Pikachu",
+"setCode": "base2",
+"number": "60"
+},
+{
+"id": "basep-1",
+"name": "Pikachu",
+"setCode": "basep",
+"number": "1"
+},
+{
+"id": "basep-27",
+"name": "Pikachu",
+"setCode": "basep",
+"number": "27"
+},
+{
+"id": "basep-40",
+"name": "Pokémon Center",
+"setCode": "basep",
+"number": "40"
+},
+{
+"id": "basep-51",
+"name": "Rapidash",
+"setCode": "basep",
+"number": "51"
+},
+{
+"id": "neo3-1",
+"name": "Ampharos",
+"setCode": "neo3",
+"number": "1"
+},
+{
+"id": "lc-60",
+"name": "Rapidash",
+"setCode": "lc",
+"number": "60"
+},
+{
+"id": "ex11-73",
+"name": "Larvitar δ",
+"setCode": "ex11",
+"number": "73"
+},
+{
+"id": "ex13-3",
+"name": "Deoxys δ",
+"setCode": "ex13",
+"number": "3"
+},
+{
+"id": "ex13-5",
+"name": "Deoxys δ",
+"setCode": "ex13",
+"number": "5"
+},
+{
+"id": "ex13-6",
+"name": "Deoxys δ",
+"setCode": "ex13",
+"number": "6"
+},
+{
+"id": "ex13-78",
+"name": "Pikachu",
+"setCode": "ex13",
+"number": "78"
+},
+{
+"id": "ex15-1",
+"name": "Ampharos δ",
+"setCode": "ex15",
+"number": "1"
+},
+{
+"id": "ex15-2",
+"name": "Feraligatr δ",
+"setCode": "ex15",
+"number": "2"
+},
+{
+"id": "ex15-51",
+"name": "Larvitar",
+"setCode": "ex15",
+"number": "51"
+},
+{
+"id": "ex15-56",
+"name": "Nidoran♀ δ",
+"setCode": "ex15",
+"number": "56"
+},
+{
+"id": "ex15-88",
+"name": "δ Rainbow Energy",
+"setCode": "ex15",
+"number": "88"
+},
+{
+"id": "ex15-90",
+"name": "Altaria ex δ",
+"setCode": "ex15",
+"number": "90"
+},
+{
+"id": "ex15-100",
+"name": "Charizard ☆ δ",
+"setCode": "ex15",
+"number": "100"
+},
+{
+"id": "hgss2-51",
+"name": "Larvitar",
+"setCode": "hgss2",
+"number": "51"
+},
+{
+"id": "hgss2-78",
+"name": "Judge",
+"setCode": "hgss2",
+"number": "78"
+},
+{
+"id": "col1-1",
+"name": "Clefable",
+"setCode": "col1",
+"number": "1"
+},
+{
+"id": "bwp-BW31",
+"name": "Victory Cup",
+"setCode": "bwp",
+"number": "BW31"
+},
+{
+"id": "bwp-BW47",
+"name": "Rayquaza-EX",
+"setCode": "bwp",
+"number": "BW47"
+},
+{
+"id": "bwp-BW48",
+"name": "Altaria",
+"setCode": "bwp",
+"number": "BW48"
+},
+{
+"id": "bwp-BW95",
+"name": "Champions Festival",
+"setCode": "bwp",
+"number": "BW95"
+},
+{
+"id": "xy9-104",
+"name": "Misty's Determination",
+"setCode": "xy9",
+"number": "104"
+},
+{
+"id": "xy11-25",
+"name": "Volcanion",
+"setCode": "xy11",
+"number": "25"
+},
+{
+"id": "xy11-40",
+"name": "Ampharos",
+"setCode": "xy11",
+"number": "40"
+},
+{
+"id": "xy11-103",
+"name": "Ninja Boy",
+"setCode": "xy11",
+"number": "103"
+},
+{
+"id": "sm1-20",
+"name": "Tsareena",
+"setCode": "sm1",
+"number": "20"
+},
+{
+"id": "smp-SM150",
+"name": "Raikou",
+"setCode": "smp",
+"number": "SM150"
+},
+{
+"id": "smp-SM198",
+"name": "Bulbasaur",
+"setCode": "smp",
+"number": "SM198"
+},
+{
+"id": "swshp-SWSH240",
+"name": "Finneon",
+"setCode": "swshp",
+"number": "SWSH240"
+},
+{
+"id": "swsh4-131",
+"name": "Snorlax",
+"setCode": "swsh4",
+"number": "131"
+},
+{
+"id": "swsh5-6",
+"name": "Kricketune V",
+"setCode": "swsh5",
+"number": "6"
+},
+{
+"id": "sv01-114",
+"name": "Lucario",
+"setCode": "sv01",
+"number": "114"
+},
+{
+"id": "svp-005",
+"name": "Quaquaval",
+"setCode": "svp",
+"number": "005"
+},
+{
+"id": "svp-027",
+"name": "Pikachu",
+"setCode": "svp",
+"number": "027"
+},
+{
+"id": "svp-028",
+"name": "Miraidon ex",
+"setCode": "svp",
+"number": "028"
+},
+{
+"id": "svp-051",
+"name": "Snorlax",
+"setCode": "svp",
+"number": "051"
+},
+{
+"id": "svp-088",
+"name": "Pikachu",
+"setCode": "svp",
+"number": "088"
+},
+{
+"id": "svp-097",
+"name": "Flutter Mane",
+"setCode": "svp",
+"number": "097"
+},
+{
+"id": "svp-159",
+"name": "Magneton",
+"setCode": "svp",
+"number": "159"
+},
+{
+"id": "sv08.5-074",
+"name": "Eevee",
+"setCode": "sv08.5",
+"number": "074"
+},
+{
+"id": "sv08.5-075",
+"name": "Eevee ex",
+"setCode": "sv08.5",
+"number": "075"
+},
+{
+"id": "sv10.5b-034",
+"name": "Zekrom ex",
+"setCode": "sv10.5b",
+"number": "034"
+},
+{
+"id": "me04-034",
+"name": "Deoxys",
+"setCode": "me04",
+"number": "034"
+},
+{
+"id": "me04-090",
+"name": "Ampharos",
+"setCode": "me04",
+"number": "090"
+},
+{
+"id": "me05-020",
+"name": "Primarina",
+"setCode": "me05",
+"number": "020"
+},
+{
+"id": "me05-088",
+"name": "Primarina",
+"setCode": "me05",
+"number": "088"
+}
+]

@@ -1,0 +1,980 @@
+{
+ "1411": {
+  "products": {
+   "results": [
+    {
+     "productId": 83525,
+     "name": "Altaria ex (Delta Species)",
+     "groupId": 1411,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "90/101"
+      }
+     ]
+    },
+    {
+     "productId": 83549,
+     "name": "Ampharos (Delta Species)",
+     "groupId": 1411,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "1/101"
+      }
+     ]
+    },
+    {
+     "productId": 84198,
+     "name": "Charizard Star (Delta Species)",
+     "groupId": 1411,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "100/101"
+      }
+     ]
+    },
+    {
+     "productId": 84755,
+     "name": "Delta Rainbow Energy",
+     "groupId": 1411,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "88/101"
+      }
+     ]
+    },
+    {
+     "productId": 87722,
+     "name": "Nidoran F (Delta Species)",
+     "groupId": 1411,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "56/101"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 83525,
+     "lowPrice": 55.36,
+     "midPrice": 105.49,
+     "highPrice": 155.19,
+     "marketPrice": 112.47,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 83549,
+     "lowPrice": 38.5,
+     "midPrice": 127.0,
+     "highPrice": 1221.6,
+     "marketPrice": 72.38,
+     "directLowPrice": 737.87,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 83549,
+     "lowPrice": 38.68,
+     "midPrice": 149.0,
+     "highPrice": 1512.74,
+     "marketPrice": 173.65,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 84198,
+     "lowPrice": 18500.0,
+     "midPrice": 39500.0,
+     "highPrice": 40000.0,
+     "marketPrice": null,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 84755,
+     "lowPrice": 0.3,
+     "midPrice": 0.76,
+     "highPrice": 57.99,
+     "marketPrice": 1.14,
+     "directLowPrice": 53.03,
+     "subTypeName": "Normal"
+    },
+    {
+     "productId": 84755,
+     "lowPrice": 17.99,
+     "midPrice": 25.68,
+     "highPrice": 279.14,
+     "marketPrice": 23.99,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 87722,
+     "lowPrice": 0.35,
+     "midPrice": 0.85,
+     "highPrice": 19.72,
+     "marketPrice": 0.84,
+     "directLowPrice": null,
+     "subTypeName": "Normal"
+    },
+    {
+     "productId": 87722,
+     "lowPrice": 13.0,
+     "midPrice": 30.0,
+     "highPrice": 199.99,
+     "marketPrice": 14.59,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    }
+   ]
+  }
+ },
+ "1379": {
+  "products": {
+   "results": [
+    {
+     "productId": 84760,
+     "name": "Deoxys (Delta Species - Attack Forme)",
+     "groupId": 1379,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "3/110"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 84760,
+     "lowPrice": 65.99,
+     "midPrice": 245.49,
+     "highPrice": 799.95,
+     "marketPrice": 82.37,
+     "directLowPrice": 598.98,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 84760,
+     "lowPrice": 549.99,
+     "midPrice": 1496.92,
+     "highPrice": 1939.99,
+     "marketPrice": 1498.99,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    }
+   ]
+  }
+ },
+ "1407": {
+  "products": {
+   "results": [
+    {
+     "productId": 83520,
+     "name": "Altaria - BW48 (Prerelease)",
+     "groupId": 1407,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "BW48"
+      }
+     ]
+    },
+    {
+     "productId": 84162,
+     "name": "Champions Festival - BW95 (Worlds 13)",
+     "groupId": 1407,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "BW95"
+      }
+     ]
+    },
+    {
+     "productId": 90353,
+     "name": "Victory Cup - BW31 (Battle Road Autumn 2011) [1st Place]",
+     "groupId": 1407,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "BW31"
+      }
+     ]
+    },
+    {
+     "productId": 96566,
+     "name": "Altaria - BW48 (Prerelease) [Staff]",
+     "groupId": 1407,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "BW48"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 83520,
+     "lowPrice": 54.0,
+     "midPrice": 109.99,
+     "highPrice": 349.24,
+     "marketPrice": 45.43,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 84162,
+     "lowPrice": 189.99,
+     "midPrice": 196.64,
+     "highPrice": 203.29,
+     "marketPrice": 170.0,
+     "directLowPrice": null,
+     "subTypeName": "Normal"
+    },
+    {
+     "productId": 90353,
+     "lowPrice": 375.0,
+     "midPrice": 399.9,
+     "highPrice": 491.38,
+     "marketPrice": 399.99,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 96566,
+     "lowPrice": 229.99,
+     "midPrice": 229.99,
+     "highPrice": 229.99,
+     "marketPrice": 350.0,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    }
+   ]
+  }
+ },
+ "1539": {
+  "products": {
+   "results": [
+    {
+     "productId": 123183,
+     "name": "Judge - 78/95 (League Promo)",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "078/095"
+      }
+     ]
+    },
+    {
+     "productId": 126017,
+     "name": "Volcanion - 25/114 (Pokemon League)",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "025/114"
+      }
+     ]
+    },
+    {
+     "productId": 129721,
+     "name": "Ninja Boy - 103/114 (League Cup)",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "103/114"
+      }
+     ]
+    },
+    {
+     "productId": 130324,
+     "name": "Misty's Determination - 104/122 (Regional Championships)",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "104/122"
+      }
+     ]
+    },
+    {
+     "productId": 130327,
+     "name": "Tsareena - 20/149 (League Challenge) [1st Place]",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "020/149"
+      }
+     ]
+    },
+    {
+     "productId": 130328,
+     "name": "Tsareena - 20/149 (League Challenge) [2nd Place]",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "020/149"
+      }
+     ]
+    },
+    {
+     "productId": 211520,
+     "name": "Pokemon Communication - 152a/152 (Oceania Championships) [Staff]",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "152a/181"
+      }
+     ]
+    },
+    {
+     "productId": 242767,
+     "name": "Misty's Determination - 104/122 (Regional Championships) [Staff]",
+     "groupId": 1539,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "104/122"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 123183,
+     "lowPrice": 179.99,
+     "midPrice": 208.0,
+     "highPrice": 1349.74,
+     "marketPrice": 106.33,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 126017,
+     "lowPrice": 0.5,
+     "midPrice": 0.96,
+     "highPrice": 19.72,
+     "marketPrice": 0.94,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 129721,
+     "lowPrice": 0.95,
+     "midPrice": 2.0,
+     "highPrice": 35.34,
+     "marketPrice": 2.23,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 130324,
+     "lowPrice": 7.0,
+     "midPrice": 20.5,
+     "highPrice": 119.74,
+     "marketPrice": 14.63,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 130327,
+     "lowPrice": 12.49,
+     "midPrice": 16.25,
+     "highPrice": 20.0,
+     "marketPrice": 8.87,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 130328,
+     "lowPrice": 4.3,
+     "midPrice": 4.99,
+     "highPrice": 51.74,
+     "marketPrice": 4.44,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    },
+    {
+     "productId": 242767,
+     "lowPrice": 125.0,
+     "midPrice": 168.5,
+     "highPrice": 849.74,
+     "marketPrice": 148.45,
+     "directLowPrice": null,
+     "subTypeName": "Reverse Holofoil"
+    }
+   ]
+  }
+ },
+ "22872": {
+  "products": {
+   "results": [
+    {
+     "productId": 487751,
+     "name": "Quaquaval - 005 (Prerelease)",
+     "groupId": 22872,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "005"
+      }
+     ]
+    },
+    {
+     "productId": 500264,
+     "name": "Pikachu - 027 (Pokemon Center Exclusive)",
+     "groupId": 22872,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "027"
+      }
+     ]
+    },
+    {
+     "productId": 522650,
+     "name": "Quaquaval - 005 (Prerelease) [Staff]",
+     "groupId": 22872,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "005"
+      }
+     ]
+    },
+    {
+     "productId": 543946,
+     "name": "Flutter Mane - 097",
+     "groupId": 22872,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "097"
+      }
+     ]
+    },
+    {
+     "productId": 543947,
+     "name": "Flutter Mane - 097 (Pokemon Center)",
+     "groupId": 22872,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "097"
+      }
+     ]
+    },
+    {
+     "productId": 594468,
+     "name": "Magneton - 159 (Pokémon Center Exclusive)",
+     "groupId": 22872,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "159"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 487751,
+     "lowPrice": 0.98,
+     "midPrice": 1.49,
+     "highPrice": 21.02,
+     "marketPrice": 1.3,
+     "directLowPrice": 0.99,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 500264,
+     "lowPrice": 99.99,
+     "midPrice": 166.1,
+     "highPrice": 9999.0,
+     "marketPrice": 161.94,
+     "directLowPrice": 166.1,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 522650,
+     "lowPrice": 42.74,
+     "midPrice": 51.5,
+     "highPrice": 279.64,
+     "marketPrice": 41.01,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 543946,
+     "lowPrice": 1.84,
+     "midPrice": 3.11,
+     "highPrice": 46.04,
+     "marketPrice": 2.84,
+     "directLowPrice": 3.69,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 543947,
+     "lowPrice": 30.25,
+     "midPrice": 35.29,
+     "highPrice": 500.0,
+     "marketPrice": 33.61,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 594468,
+     "lowPrice": 50.52,
+     "midPrice": 63.12,
+     "highPrice": 545.14,
+     "marketPrice": 57.94,
+     "directLowPrice": 56.86,
+     "subTypeName": "Holofoil"
+    }
+   ]
+  }
+ },
+ "1418": {
+  "products": {
+   "results": [
+    {
+     "productId": 88213,
+     "name": "Pokemon Center",
+     "groupId": 1418,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "40/53"
+      }
+     ]
+    },
+    {
+     "productId": 126209,
+     "name": "Pikachu [W Stamped]",
+     "groupId": 1418,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "60/64"
+      }
+     ]
+    },
+    {
+     "productId": 154997,
+     "name": "Clefable (Prerelease)",
+     "groupId": 1418,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "01/64"
+      }
+     ]
+    },
+    {
+     "productId": 244347,
+     "name": "Rapidash [Pokemon Center NY]",
+     "groupId": 1418,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "51/53"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 126209,
+     "lowPrice": 131.27,
+     "midPrice": 299.25,
+     "highPrice": 1299.74,
+     "marketPrice": 249.46,
+     "directLowPrice": null,
+     "subTypeName": "Normal"
+    },
+    {
+     "productId": 154997,
+     "lowPrice": 750.0,
+     "midPrice": 887.5,
+     "highPrice": 1699.99,
+     "marketPrice": 248.33,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 244347,
+     "lowPrice": 199.99,
+     "midPrice": 207.0,
+     "highPrice": 644.74,
+     "marketPrice": 119.87,
+     "directLowPrice": null,
+     "subTypeName": "Normal"
+    }
+   ]
+  }
+ },
+ "2374": {
+  "products": {
+   "results": [
+    {
+     "productId": 123633,
+     "name": "Pikachu - 58/102 (E3 Stamped)",
+     "groupId": 2374,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "058/102"
+      }
+     ]
+    },
+    {
+     "productId": 277677,
+     "name": "Snorlax - 131/185 (Vivid Voltage Stamped)",
+     "groupId": 2374,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "131/185"
+      }
+     ]
+    },
+    {
+     "productId": 618089,
+     "name": "Eevee ex - 075/131 (Prismatic Evolutions Stamp)",
+     "groupId": 2374,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "075/131"
+      }
+     ]
+    },
+    {
+     "productId": 637079,
+     "name": "Larvitar (Delta Species Stamp)",
+     "groupId": 2374,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "73/113"
+      }
+     ]
+    },
+    {
+     "productId": 652714,
+     "name": "Lucario (Scarlet & Violet Stamp)",
+     "groupId": 2374,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "114/198"
+      }
+     ]
+    },
+    {
+     "productId": 705526,
+     "name": "Primarina - 020/084 (What's Your Favorite Stamp)",
+     "groupId": 2374,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "020/084"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 123633,
+     "lowPrice": 64.6,
+     "midPrice": 299.0,
+     "highPrice": 495.0,
+     "marketPrice": 68.0,
+     "directLowPrice": null,
+     "subTypeName": "Normal"
+    },
+    {
+     "productId": 277677,
+     "lowPrice": 89.99,
+     "midPrice": 110.9,
+     "highPrice": 493.14,
+     "marketPrice": 102.97,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 618089,
+     "lowPrice": 7.96,
+     "midPrice": 9.99,
+     "highPrice": 96.95,
+     "marketPrice": 8.83,
+     "directLowPrice": 10.99,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 637079,
+     "lowPrice": 296.74,
+     "midPrice": 487.09,
+     "highPrice": 677.44,
+     "marketPrice": 87.88,
+     "directLowPrice": null,
+     "subTypeName": "Normal"
+    },
+    {
+     "productId": 652714,
+     "lowPrice": 0.3,
+     "midPrice": 0.92,
+     "highPrice": 19.72,
+     "marketPrice": 0.74,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 705526,
+     "lowPrice": 47.41,
+     "midPrice": 60.0,
+     "highPrice": 101.08,
+     "marketPrice": 51.92,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    }
+   ]
+  }
+ },
+ "22880": {
+  "products": {
+   "results": [
+    {
+     "productId": 475973,
+     "name": "Kricketune V - 006/163",
+     "groupId": 22880,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "006/163"
+      }
+     ]
+    },
+    {
+     "productId": 671743,
+     "name": "Zekrom ex - 034/086 (Left Stamp)",
+     "groupId": 22880,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "034/086"
+      }
+     ]
+    },
+    {
+     "productId": 704471,
+     "name": "Zekrom ex - 034/086 (Right Stamp)",
+     "groupId": 22880,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "034/086"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 475973,
+     "lowPrice": 4.49,
+     "midPrice": 5.39,
+     "highPrice": 50.0,
+     "marketPrice": 4.51,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 671743,
+     "lowPrice": 2.0,
+     "midPrice": 3.71,
+     "highPrice": 62.74,
+     "marketPrice": 2.81,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 704471,
+     "lowPrice": 1.5,
+     "midPrice": 3.0,
+     "highPrice": 15.0,
+     "marketPrice": 2.17,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    }
+   ]
+  }
+ },
+ "1861": {
+  "products": {
+   "results": [
+    {
+     "productId": 158256,
+     "name": "Raikou - SM150 (Prerelease)",
+     "groupId": 1861,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "SM150"
+      }
+     ]
+    },
+    {
+     "productId": 178794,
+     "name": "Raikou - SM150 (Prerelease) (Staff)",
+     "groupId": 1861,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "SM150"
+      }
+     ]
+    },
+    {
+     "productId": 188320,
+     "name": "Bulbasaur - SM198 (In-Store Event Promo)",
+     "groupId": 1861,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "SM198"
+      }
+     ]
+    },
+    {
+     "productId": 206824,
+     "name": "Bulbasaur - SM198 (Detective Pikachu Stamped)",
+     "groupId": 1861,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "SM198"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 158256,
+     "lowPrice": 9.49,
+     "midPrice": 21.58,
+     "highPrice": 75.0,
+     "marketPrice": 41.76,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 178794,
+     "lowPrice": 195.0,
+     "midPrice": 499.99,
+     "highPrice": 1269.44,
+     "marketPrice": 198.83,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 188320,
+     "lowPrice": 19.08,
+     "midPrice": 30.38,
+     "highPrice": 96.95,
+     "marketPrice": 22.28,
+     "directLowPrice": 19.08,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 206824,
+     "lowPrice": 11.5,
+     "midPrice": 20.47,
+     "highPrice": 198.0,
+     "marketPrice": 19.69,
+     "directLowPrice": 24.95,
+     "subTypeName": "Holofoil"
+    }
+   ]
+  }
+ },
+ "2545": {
+  "products": {
+   "results": [
+    {
+     "productId": 285254,
+     "name": "Finneon - SWSH240 (Prerelease)",
+     "groupId": 2545,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "SWSH240"
+      }
+     ]
+    },
+    {
+     "productId": 680245,
+     "name": "Finneon - SWSH240 (Prerelease Staff)",
+     "groupId": 2545,
+     "extendedData": [
+      {
+       "name": "Number",
+       "value": "SWSH240"
+      }
+     ]
+    }
+   ]
+  },
+  "prices": {
+   "results": [
+    {
+     "productId": 285254,
+     "lowPrice": 0.4,
+     "midPrice": 1.0,
+     "highPrice": 7.77,
+     "marketPrice": 0.84,
+     "directLowPrice": 1.0,
+     "subTypeName": "Holofoil"
+    },
+    {
+     "productId": 680245,
+     "lowPrice": 99.0,
+     "midPrice": 99.0,
+     "highPrice": 99.0,
+     "marketPrice": null,
+     "directLowPrice": null,
+     "subTypeName": "Holofoil"
+    }
+   ]
+  }
+ }
+}
