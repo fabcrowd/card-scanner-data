@@ -25,10 +25,12 @@ from score_real_labels import base_name  # noqa: E402
 Image.MAX_IMAGE_PIXELS = None
 MODELS = {"shipped": os.path.join(ROOT, "assets", "clip_visual_int8.onnx"),
           "B": os.path.join(ROOT, "train", "out", "B", "raw-final-int8.onnx"),
-          "F": os.path.join(ROOT, "train", "out", "fastC_real", "epoch8-ema-int8.onnx")}
+          "F": os.path.join(ROOT, "train", "out", "fastC_real", "epoch8-ema-int8.onnx"),
+          "E": os.path.join(ROOT, "train", "out", "fastE_all", "epoch16-ema-int8.onnx"),
+          "G1": os.path.join(ROOT, "train", "out", "fastG1_all", "epoch16-ema-int8.onnx")}
 HEIGHTS = [120, 150, 200, 250]
 SRCS = ["hibid", "goodwill-pack2"]
-OUT = os.path.join(ROOT, "data", "reports", "cross-source")
+OUT = os.environ.get("CROSS_OUT") or os.path.join(ROOT, "data", "reports", "cross-source")  # G1 run sets CROSS_OUT
 LABELS = os.path.join(ROOT, "data", "pseudo-labels", "eval")
 
 

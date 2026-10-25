@@ -59,6 +59,110 @@ def sample_degradation(rng, n):
             "quals": sample_qualities(rng, n)}
 
 
+# ---------------------------------------------------------------- CDN-realistic degrader (G1, opt-in --degrade-mix cdn50)
+# Real site renditions are cleaner than the synthetic degrader: Lanczos/bicubic/area resampling, JPEG q~75-92, little blur,
+# sometimes re-encoded after a 1-2 px resize (CDN after upload). Heights come from the SAME sampler (sample_heights).
+CDN_FRAC = 0.5
+CDN_KINDS = ("lanczos", "bicubic", "area")
+CDN_SIGMA = (0.0, 0.4)  # 320-px-card units, like BLUR_SIGMA
+CDN_Q1 = (75, 92)
+CDN_SECOND_P = 0.3
+CDN_Q2 = (80, 95)
+CDN_DELTAS = (-2, -1, 1, 2)
+MIN_SIDE = 8
+
+
+def sample_cdn(rng, n):
+    """CDN parameters for n samples (all drawn, used only where mask 'cdn' is True)."""
+    return {"cdn_kinds": rng.integers(0, len(CDN_KINDS), n), "cdn_sigmas": rng.uniform(*CDN_SIGMA, n),
+            "cdn_q1": rng.integers(CDN_Q1[0], CDN_Q1[1] + 1, n), "cdn_second": rng.random(n) < CDN_SECOND_P,
+            "cdn_q2": rng.integers(CDN_Q2[0], CDN_Q2[1] + 1, n), "cdn_d": rng.choice(np.array(CDN_DELTAS), n)}
+
+
+def sample_degradation_mix(rng, n, mix="cdn50"):
+    """mix 'none' -> sample_degradation unchanged. 'cdn50' -> the SAME base draw (heights identical to 'none' for the same
+    rng state) plus a 50/50 per-sample choice of CDN degrader (key 'cdn' bool [n], plus the sample_cdn keys)."""
+    p = sample_degradation(rng, n)
+    if mix == "none":
+        return p
+    if mix != "cdn50":
+        raise ValueError(f"unknown degrade mix {mix!r}")
+    p["cdn"] = rng.random(n) < CDN_FRAC
+    p.update(sample_cdn(rng, n))
+    return p
+
+
+def _resample_matrix(s_in, s_out, kind, n=SIDE):
+    """[B,n,n] row-resize matrices s_in -> s_out (rows >= s_out and cols >= s_in zero), antialiased when downscaling.
+    kind per sample: 0 Lanczos3, 1 bicubic (a=-0.5), 2 area (exact box overlap). Rows sum to 1."""
+    dev = s_in.device
+    i = torch.arange(n, device=dev, dtype=torch.float32).view(1, -1, 1)
+    j = torch.arange(n, device=dev, dtype=torch.float32).view(1, 1, -1)
+    scale = (s_in / s_out).view(-1, 1, 1)
+    support = scale.clamp(min=1.0)
+    center = (i + 0.5) * scale
+    x = (j + 0.5 - center) / support
+    ax = x.abs()
+    px = torch.pi * x
+    sinc = lambda t: torch.where(t.abs() < 1e-6, torch.ones_like(t), torch.sin(t) / torch.where(t.abs() < 1e-6, torch.ones_like(t), t))  # noqa: E731
+    lanczos = torch.where(ax < 3, sinc(px) * sinc(px / 3), torch.zeros_like(ax))
+    cubic = G._cubic(ax, -0.5)
+    lo, hi = j, j + 1
+    area = (torch.minimum(hi, center + scale / 2) - torch.maximum(lo, center - scale / 2)).clamp(min=0)
+    k = kind.view(-1, 1, 1)
+    w = torch.where(k == 0, lanczos, torch.where(k == 1, cubic, area))
+    w = w * (j < s_in.view(-1, 1, 1)).float() * (i < s_out.view(-1, 1, 1)).float()
+    return w / w.sum(-1, keepdim=True).clamp(min=1e-8)
+
+
+def _resize_square(x, mats):
+    """x [B,3,n,n] float, mats [B,n,n] -> mats x mats^T (rows then columns)."""
+    return torch.matmul(torch.matmul(mats.unsqueeze(1), x), mats.transpose(1, 2).unsqueeze(1))
+
+
+def _jpeg_group(padded, sizes, quals, device):
+    """In place: JPEG round trip of padded[i, :, :sizes[i], :sizes[i]] at quals[i] (batched per quality)."""
+    for q in np.unique(quals):
+        idx = np.flatnonzero(quals == q)
+        items = [padded[i, :, :sizes[i], :sizes[i]].contiguous() for i in idx]
+        for i, out in zip(idx, jpeg_roundtrip(items, int(q), device)):
+            padded[i, :, :sizes[i], :sizes[i]] = out
+
+
+def degrade_cdn(big, p, device):
+    """CDN-realistic degrade of the art square: mild blur -> resample to s=max(8,round(0.45H)) (Lanczos/bicubic/area)
+    -> JPEG q1 -> [with prob 0.3: resize by +-1..2 px (bicubic) -> JPEG q2] -> the same bicubic upscale to 224. p needs
+    hs + the sample_cdn keys (all length B)."""
+    n = big.shape[0]
+    art = big[:, :, SY:SY + SIDE, SX:SX + SIDE]
+    s_np = np.maximum(MIN_SIDE, np.rint(0.45 * np.asarray(p["hs"])).astype(int))
+    s = torch.from_numpy(s_np).to(device).float()
+    blur = G._blur_matrix(torch.from_numpy(np.asarray(p["cdn_sigmas"])).float().to(device))
+    down = _resample_matrix(torch.full_like(s, SIDE), s, torch.from_numpy(np.asarray(p["cdn_kinds"])).to(device))
+    small = _resize_square(art, torch.bmm(down, blur)).round().clamp(0, 255).to(torch.uint8)
+    padded = torch.zeros(n, 3, SIDE, SIDE, dtype=torch.uint8, device=device)
+    padded[:] = small
+    _jpeg_group(padded, s_np, np.asarray(p["cdn_q1"]).astype(int), device)
+    sizes = s_np.copy()
+    second = np.asarray(p["cdn_second"], bool)
+    if second.any():
+        d = np.asarray(p["cdn_d"]).astype(int)
+        d = np.where(s_np + d > SIDE, -np.abs(d), d)
+        s2_np = np.where(second, np.maximum(MIN_SIDE, s_np + d), s_np)
+        s2 = torch.from_numpy(s2_np).to(device).float()
+        idx = np.flatnonzero(second)
+        m2 = _resample_matrix(s[idx], s2[idx], torch.ones(len(idx), dtype=torch.long, device=device))
+        re = _resize_square(padded[idx].float(), m2).round().clamp(0, 255).to(torch.uint8)
+        sub = torch.zeros(len(idx), 3, SIDE, SIDE, dtype=torch.uint8, device=device)
+        sub[:] = re
+        _jpeg_group(sub, s2_np[idx], np.asarray(p["cdn_q2"])[idx].astype(int), device)
+        padded[idx] = sub
+        sizes = s2_np
+    u = G._up_matrix(torch.from_numpy(sizes).to(device).float())
+    up = torch.matmul(torch.matmul(u.unsqueeze(1), padded.float()), u.transpose(1, 2).unsqueeze(1))
+    return G._normalise(up.clamp(0, 255))
+
+
 # ---------------------------------------------------------------- GPU ops
 def jpeg_roundtrip(items, quality, device):
     """List of uint8 [3,s,s] tensors -> JPEG encode/decode at one quality. CUDA: nvJPEG, any failure raises."""
@@ -102,7 +206,20 @@ def degrade(big, p, device):
     return G._normalise(up.clamp(0, 255))
 
 
-def make_batch(cards_u8, rng, device):
+def degrade_mixed(big, p, device):
+    """degrade() for samples with cdn False, degrade_cdn() for cdn True (keys of p sliced per subset); no 'cdn' -> degrade()."""
+    if "cdn" not in p:
+        return degrade(big, p, device)
+    cdn = np.asarray(p["cdn"], bool)
+    out = torch.empty(big.shape[0], 3, CLIP_SIZE, CLIP_SIZE, device=device)
+    for mask, fn in ((~cdn, degrade), (cdn, degrade_cdn)):
+        idx = np.flatnonzero(mask)
+        if len(idx):
+            out[torch.from_numpy(idx).to(device)] = fn(big[torch.from_numpy(idx).to(device)], {k: np.asarray(v)[idx] for k, v in p.items()}, device)
+    return out
+
+
+def make_batch(cards_u8, rng, device, mix="none"):
     """cards_u8 [B,3,320,229] on device (catalog cards and/or real crops alike) -> (large, deg, hs, big).
 
     For a real crop 'big' is the (jittered) real crop: teacher input = student large view = art_view(big), and the
@@ -110,8 +227,8 @@ def make_batch(cards_u8, rng, device):
     """
     n = cards_u8.shape[0]
     big = G.jitter(cards_u8, G.jitter_boxes(rng, n))
-    p = sample_degradation(rng, n)
-    return G.art_view(big), degrade(big, p, device), p["hs"], big
+    p = sample_degradation_mix(rng, n, mix)
+    return G.art_view(big), degrade_mixed(big, p, device), p["hs"], big
 
 
 # ---------------------------------------------------------------- labels
