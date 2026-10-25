@@ -209,7 +209,9 @@ release. All actions are pinned to commit SHAs and Python packages to exact vers
 Source: tcgcsv.com, every group's `/prices` and `/products`, sequential, one pass. `price` is the market price, else
 mid. `prices` is joined by the extension only through the product id TCGdex gives a card; builds that read only `v`,
 `updatedAt` and `prices` ignore the other keys, and every build rejects a file over 8,000,000 characters.
-`catalogId` is a card id of the release `meta.json` pinned in `pins.json`.
+`catalogId` is a card id of the release `meta.json`. The price step downloads that file itself and checks it against
+`CATALOG_PIN` (url, size, sha256) in `pipeline/prices.py`; it is not a `pins.json` asset, so a failed download or hash
+fails only the price step (yesterday's `prices.json` stays) and never the learning pack.
 
 - `stamped`: products whose name carries an exact stamp tag (`pipeline/stamps.py`): `staff`, `prerelease`,
   `championship`, `league`, `pokemoncenter`, `wstamp`, `setlogo` ("(<TCGdex set name> Stamp)") and `playpokemon` (every

@@ -5,7 +5,8 @@ publishes it on the data repo's ``prices`` pre-release. ``prices`` maps a TCGPla
 product id to subtype prices, and the extension joins it only by the product id TCGdex
 gives a card.
 
-Two keys sit beside it, keyed by catalog id (the release meta.json, pinned in pins.json);
+Two keys sit beside it, keyed by catalog id (the release meta.json, pinned by CATALOG_PIN
+and fetched here, not in pins.json, so a failed download fails only this step);
 builds that only read ``v``, ``updatedAt`` and ``prices`` ignore them:
 - ``stamped``: rows ``{catalogId, stamp, productId, subtype, market, mid, low}`` for stamped
   products (see pipeline/stamps.py), each joined to exactly one catalog card.
@@ -14,6 +15,7 @@ builds that only read ``v``, ``updatedAt`` and ``prices`` ignore them:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -26,7 +28,12 @@ from . import stamps
 UPDATED_URL = "https://tcgcsv.com/last-updated.txt"
 GROUPS_URL = "https://tcgcsv.com/tcgplayer/3/groups"
 TCGDEX_SETS_URL = "https://api.tcgdex.net/v2/en/sets"
-DEFAULT_CATALOG = os.path.join("assets", "meta.json")
+# The catalog the extension downloads (lib/setup.js "meta.json"); catalog ids in prices.json are its ids.
+CATALOG_PIN = {
+    "url": "https://github.com/fabcrowd/pokemon-auto-lister/releases/download/v2.0/meta.json",
+    "sha256": "5febdc04fa74a456b80f6f322bc58fd22f1c4bb5e685abda3c50a12edfd88866",
+    "bytes": 5_062_725,
+}
 USER_AGENT = "card-scanner-nightly/1"
 UPDATED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 MIN_PRODUCTS = 1000
@@ -221,6 +228,25 @@ def fetch_list(url: str) -> list:
     return payload
 
 
+def fetch_catalog(get_bytes: Callable[[str, int], bytes] = _read, pin: dict = CATALOG_PIN) -> list:
+    """Catalog card rows from the pinned meta.json, refused unless its size and sha256 match the pin.
+
+    Raises:
+        ValueError: the size, hash or shape does not match.
+        Missing: raised by ``get_bytes`` when the file is gone.
+    """
+    data = get_bytes(pin["url"], pin["bytes"])
+    if len(data) != pin["bytes"]:
+        raise ValueError(f"catalog is {len(data)} bytes, pinned {pin['bytes']}")
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != pin["sha256"]:
+        raise ValueError(f"catalog sha256 {digest} does not match the pin {pin['sha256']}")
+    cards = json.loads(data.decode("utf-8"))
+    if not isinstance(cards, list):
+        raise ValueError("catalog meta.json is not a list")
+    return cards
+
+
 def write_snapshot(path: str, snapshot: dict) -> None:
     """Write prices.json. The parent directory must already exist."""
     text = json.dumps(snapshot, separators=(",", ":"), sort_keys=True) + "\n"
@@ -234,9 +260,15 @@ def main() -> None:
     """Write the daily snapshot to ``--out``."""
     parser = argparse.ArgumentParser(description="Write the daily TCGPlayer price snapshot.")
     parser.add_argument("--out", required=True)
-    parser.add_argument("--catalog", default=DEFAULT_CATALOG, help="release meta.json (scripts/fetch_assets.py, pins.json)")
+    parser.add_argument("--catalog", help="a local copy of the pinned meta.json (still checked against CATALOG_PIN)")
     args = parser.parse_args()
-    catalog = stamps.Catalog.load(args.catalog, fetch_list(TCGDEX_SETS_URL))
+    if args.catalog:
+        with open(args.catalog, "rb") as handle:
+            local = handle.read()
+        cards = fetch_catalog(lambda url, limit: local)
+    else:
+        cards = fetch_catalog()
+    catalog = stamps.Catalog(cards, fetch_list(TCGDEX_SETS_URL))
     report: dict = {}
     snapshot = collect_snapshot(fetch_text, fetch_json, catalog=catalog, report=report)
     directory = os.path.dirname(args.out)
