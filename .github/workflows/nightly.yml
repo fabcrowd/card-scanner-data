@@ -98,6 +98,21 @@ jobs:
             --live-dir live --status-history live-status/status.json --seed seed.npz \
             --base-url "https://github.com/${RELEASE_REPO}/releases/download/${tag}/"
 
+      # Not part of the learning bundle: a failed price fetch must not stop the pack, and the file is published
+      # on its own pre-release so "latest" stays the live bundle.
+      - name: Build the daily price snapshot
+        id: prices
+        continue-on-error: true
+        run: python -m pipeline.prices --out out/prices.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.prices.outcome == 'success'
+        with:
+          name: prices
+          path: out/prices.json
+          if-no-files-found: error
+          retention-days: 7
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pack
@@ -170,3 +185,20 @@ jobs:
           gh release view status --repo "${RELEASE_REPO}" >/dev/null 2>&1 || \
             gh release create status --repo "${RELEASE_REPO}" --prerelease --title "Learning status" --notes "STATUS.md and status.json, rewritten nightly."
           gh release upload status out/STATUS.md out/status.json --clobber --repo "${RELEASE_REPO}"
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        id: prices
+        continue-on-error: true
+        with:
+          name: prices
+          path: prices
+
+      # Pre-release, like status: "latest" must stay the learning bundle the extension already tracks.
+      - name: Publish the price snapshot
+        if: steps.prices.outcome == 'success'
+        run: |
+          test -f prices/prices.json
+          gh release view prices --repo "${RELEASE_REPO}" >/dev/null 2>&1 || \
+            gh release create prices --repo "${RELEASE_REPO}" --prerelease --title "Daily prices" \
+              --notes "TCGPlayer market prices, rewritten nightly. Not the learning bundle."
+          gh release upload prices prices/prices.json --clobber --repo "${RELEASE_REPO}"

@@ -53,6 +53,12 @@ class Workflow(unittest.TestCase):
         self.assertIn("--prerelease", SIGN)
         self.assertIn("manifest.sig", SIGN)
 
+    def test_daily_prices_are_their_own_prerelease_and_a_failed_fetch_does_not_stop_the_pack(self):
+        self.assertIn("python -m pipeline.prices", BUILD)
+        self.assertIn("continue-on-error: true", BUILD)
+        self.assertIn('gh release create prices --repo "${RELEASE_REPO}" --prerelease', SIGN)
+        self.assertIn("gh release upload prices prices/prices.json --clobber", SIGN)
+
     def test_every_part_is_uploaded_from_the_build_job(self):
         for name in ("community-pack.bin", "adapter.bin", "check.bin", "catalog-extra.bin", "manifest.json", "STATUS.md"):
             self.assertIn(f"out/{name}", BUILD)
