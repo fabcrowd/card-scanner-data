@@ -1,0 +1,21 @@
+// One-page probe: node harvest_probe.mjs <url> [waitMs]. Prints status/title/challenge flag, links and img urls.
+import { createRequire } from 'node:module';
+const require = createRequire('C:/repos/projects/auto card lister/package.json');
+const { chromium } = require('playwright');
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const url = process.argv[2], wait = Number(process.argv[3] || 5000);
+const CH = /just a moment|attention required|captcha|access denied|checking your browser|verify you are human|robot|pardon our interruption|unusual traffic|press & hold|px-captcha/i;
+const b = await chromium.launch({ headless: false });
+const c = await b.newContext({ userAgent: UA, viewport: { width: 1400, height: 1000 } });
+const p = await c.newPage();
+const r = await p.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+await p.waitForTimeout(wait);
+await p.evaluate(() => window.scrollBy(0, 2500)); await p.waitForTimeout(1500);
+const title = await p.title(); const text = await p.evaluate(() => document.body?.innerText ?? '');
+console.log('status', r?.status(), 'title', title, 'len', text.length, 'challenge', CH.test(title) || CH.test(text.slice(0, 1500)));
+console.log(text.slice(0, 400).replace(/\s+/g, ' '));
+const links = await p.evaluate(() => [...new Set([...document.querySelectorAll('a[href]')].map(a => a.href.split('?')[0]))]);
+console.log('LINKS', links.length); console.log(links.slice(0, 40).join(String.fromCharCode(10)));
+const imgs = await p.evaluate(() => [...new Set([...document.querySelectorAll('img')].map(i => i.currentSrc || i.src))]);
+console.log('IMGS', imgs.length); console.log(imgs.slice(0, 8).join('\n'));
+await b.close();
