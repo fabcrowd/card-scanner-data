@@ -45,7 +45,6 @@ PHOTO_EXT = R.PHOTO_EXT
 OUT_DIR = os.path.join(ROOT, "data", "pseudo-labels")
 
 _ctx = {}
-Image.MAX_IMAGE_PIXELS = None
 
 
 def _load_verifier():
@@ -234,6 +233,7 @@ def build_audit(rows, out_dir, n_acc=40, n_rej=20, per_sheet=15, cols=3):
 
 
 def main(argv=None):
+    Image.MAX_IMAGE_PIXELS = None  # local trusted photos; set here, not at import, so importers keep embed.py's limit
     ap = argparse.ArgumentParser()
     ap.add_argument("--photos", default=os.path.join(ROOT, "data", "goodwill-pack"))
     ap.add_argument("--out", default=None, help="jsonl path (default data/pseudo-labels/<photos dir name>.jsonl)")

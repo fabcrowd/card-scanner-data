@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 IMG_DIR = r"C:\repos\projects\auto card lister\data\card-catalog\images"
 CARD_ID = "base1-4"

@@ -37,7 +37,6 @@ OUT_W, OUT_H = 750, 1050
 PACKS = ("goodwill-pack.jsonl", "goodwill-pack2.jsonl")
 LABELS_DIR = os.path.join(D.ROOT, "data", "pseudo-labels", "v3")
 REAL_CACHE = os.path.join(D.ROOT, "train", "out", "cache", "real320.pt")
-Image.MAX_IMAGE_PIXELS = None  # local trusted photos
 
 
 # ---------------------------------------------------------------- parameter sampling
@@ -310,6 +309,7 @@ def rectify_320(img, box):
 
 
 def _crops_of_photo(job):
+    Image.MAX_IMAGE_PIXELS = None  # local trusted photos; set at use, not at import
     photo, boxes = job
     with Image.open(photo) as im:
         img = im.convert("RGB")

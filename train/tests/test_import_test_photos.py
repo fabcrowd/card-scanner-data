@@ -7,7 +7,7 @@ import sys
 import pytest
 from PIL import Image
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"))
 import import_test_photos as imp  # noqa: E402
 
 

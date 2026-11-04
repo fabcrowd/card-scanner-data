@@ -22,7 +22,6 @@ from pipeline.embed import ClipEmbedder  # noqa: E402
 from run_real_photos import DIGITAL_RE, crop_card, load_names, to_png  # noqa: E402
 from score_real_labels import base_name  # noqa: E402
 
-Image.MAX_IMAGE_PIXELS = None
 MODELS = {"shipped": os.path.join(ROOT, "assets", "clip_visual_int8.onnx"),
           "B": os.path.join(ROOT, "train", "out", "B", "raw-final-int8.onnx"),
           "F": os.path.join(ROOT, "train", "out", "fastC_real", "epoch8-ema-int8.onnx"),
@@ -47,6 +46,7 @@ def degrade_png(img, box, h):
 
 
 def main():
+    Image.MAX_IMAGE_PIXELS = None  # local trusted photos; set here, not at import, so importers keep embed.py's limit
     os.makedirs(OUT, exist_ok=True)
     cat = Catalog.load(os.path.join(ROOT, "assets", "catalog.bin.gz"), os.path.join(ROOT, "assets", "id_map.json"))
     nm = load_names()

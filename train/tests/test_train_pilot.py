@@ -8,7 +8,7 @@ import pytest
 import torch
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "train"))
 import pilot_data as D  # noqa: E402
 

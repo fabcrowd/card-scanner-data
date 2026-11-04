@@ -4,7 +4,7 @@ import sys
 import pytest
 from PIL import Image
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 IMG_DIR = r"C:\repos\projects\auto card lister\data\card-catalog\images"
 IDS = ["base1-1", "base1-2", "base1-3", "base1-4", "base1-5", "base1-6"]

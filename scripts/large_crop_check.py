@@ -19,7 +19,6 @@ from run_real_photos import DIGITAL_RE, crop_card, load_names, to_png, _font  # 
 from score_real_labels import base_name  # noqa: E402
 import eval_synth_small as E  # noqa: E402
 
-Image.MAX_IMAGE_PIXELS = None  # pipeline.embed lowers it; local trusted photos
 MODELS = {"ship": os.path.join(ROOT, "assets", "clip_visual_int8.onnx"),
           "B": os.path.join(ROOT, "train", "out", "B", "raw-final-int8.onnx")}
 PACK = os.path.join(ROOT, "data", "goodwill-pack")
@@ -126,6 +125,7 @@ def sheet(items, path):
 
 
 def main():
+    Image.MAX_IMAGE_PIXELS = None  # local trusted photos; set here, not at import, so importers keep embed.py's limit
     cat = Catalog.load(os.path.join(ROOT, "assets", "catalog.bin.gz"), os.path.join(ROOT, "assets", "id_map.json"))
     nm = load_names()
     name_of = [nm.get(c) for c in cat.ids]
