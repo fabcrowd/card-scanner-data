@@ -22,7 +22,7 @@ import numpy as np
 
 from .catalog import Catalog
 from .consensus import promote
-from .contributions import build_samples, load_contributions
+from .contributions import build_samples, count_box_signals, load_contributions, without_box_signals
 from .embed import ClipEmbedder
 from .exam import TOP_K, exam_cases, score_exam
 from .manifest import ASSET_FILES, build_manifest, is_improved, manifest_bytes
@@ -91,6 +91,8 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
     modules = optional_modules() if modules is None else modules
     live = live or {}
     items, dropped = load_contributions(data_dir)
+    box_signals = count_box_signals(items)
+    items = without_box_signals(items)
     valid_ids = set(catalog.ids)
 
     teach, teach_emb, teach_failed = _embed(build_samples(items, valid_ids=valid_ids, split="teach"), embedder)
@@ -176,6 +178,7 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
         "newCards": len(new_cards["added"]) if new_cards else 0,
         "newSets": new_cards["sets"] if new_cards else [],
         "contributionsDropped": dropped,
+        "boxSignals": box_signals,
         "embedFailed": teach_failed + exam_failed,
         **promotion.stats,
     }

@@ -31,14 +31,23 @@ def install_id(n):
     return f"{n:016x}"
 
 
-def card(card_id="base1-4", box=(0.1, 0.2, 0.3, 0.4), answer=None, seed=0, scanner_id="base1-5", conf=0.8, stripe="high"):
-    return {
+def card(card_id="base1-4", box=(0.1, 0.2, 0.3, 0.4), answer=None, seed=0, scanner_id="base1-5", conf=0.8, stripe="high",
+         source="pick", detector=None):
+    c = {
         "box": list(box),
         "crop": jpeg_b64(seed),
         "answer": answer if answer is not None else {"cardId": card_id},
         "scanner": {"cardId": scanner_id, "confidence": conf, "stripe": stripe},
-        "source": "pick",
+        "source": source,
     }
+    if detector is not None:
+        c["detector"] = detector
+    return c
+
+
+def signal_card(source="removed", kind="found", score=0.7, aspect=0.71, answer=None, **kw):
+    """A box signal row (drawn, removed, put-back): carries a detector object and no card answer by default."""
+    return card(answer=answer or {"unknown": True}, source=source, detector={"score": score, "aspect": aspect, "kind": kind}, **kw)
 
 
 def item(install=1, photo=None, split="teach", cards=None, day="2026-10-15", received="2026-10-15T12:00:00.000Z"):

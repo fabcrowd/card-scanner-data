@@ -20,6 +20,11 @@ _CARD_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")
 _STRIPES = {"high", "medium", "low", "none"}
 _SOURCES = {"pick", "wrong-card", "confirm"}
+# Box signal rows: stored and counted, never used as samples or votes (a later study decides how to use them).
+_BOX_SIGNAL_SOURCES = {"drawn", "removed", "put-back"}
+_DETECTOR_KINDS = {"found", "missed", "hidden", "tooSmall"}
+_ASPECT_MIN = 0.05
+_ASPECT_MAX = 20
 
 
 def split_for(photo_id):
@@ -55,15 +60,38 @@ def _valid_answer(a):
     return key in ("notACard", "unknown") and value is True
 
 
+def _valid_detector(d):
+    if not (isinstance(d, dict) and set(d) == {"score", "aspect", "kind"}):
+        return False
+    aspect = d["aspect"]
+    return (
+        (d["score"] is None or _in_unit(d["score"]))
+        and isinstance(aspect, (int, float)) and not isinstance(aspect, bool) and _ASPECT_MIN <= aspect <= _ASPECT_MAX
+        and d["kind"] in _DETECTOR_KINDS
+    )
+
+
+def _is_box_signal(c):
+    return c["source"] in _BOX_SIGNAL_SOURCES
+
+
 def _card_error(c):
-    if not isinstance(c, dict) or set(c) != {"box", "crop", "answer", "scanner", "source"}:
+    base = {"box", "crop", "answer", "scanner", "source"}
+    if not isinstance(c, dict) or set(c) not in (base, base | {"detector"}):
         return "card fields"
+    signal = _is_box_signal(c)
+    if signal != ("detector" in c):
+        return "detector"
+    if signal and not _valid_detector(c["detector"]):
+        return "detector"
     box = c["box"]
     if not (isinstance(box, list) and len(box) == 4 and all(_in_unit(x) for x in box) and box[2] > 0 and box[3] > 0):
         return "box"
     if not _valid_crop(c["crop"]):
         return "crop"
     if not _valid_answer(c["answer"]):
+        return "answer"
+    if signal and ("notACard" in c["answer"] or ("cardId" in c["answer"] and c["source"] != "drawn")):
         return "answer"
     s = c["scanner"]
     if not (isinstance(s, dict) and set(s) == {"cardId", "confidence", "stripe"}):
@@ -72,7 +100,7 @@ def _card_error(c):
         return "scanner.cardId"
     if not _in_unit(s["confidence"]) or s["stripe"] not in _STRIPES:
         return "scanner values"
-    if c["source"] not in _SOURCES:
+    if not signal and c["source"] not in _SOURCES:
         return "source"
     return None
 
@@ -173,6 +201,30 @@ def _vote(it, c):
     return Vote(it["install"], day, "notACard" if "notACard" in a else "unknown", None, c["scanner"], c["source"], {day})
 
 
+def count_box_signals(items):
+    """Raw row counts of box signal rows by source: no de-duplication and no use of the answers."""
+    counts = {"drawn": 0, "removed": 0, "putBack": 0}
+    names = {"drawn": "drawn", "removed": "removed", "put-back": "putBack"}
+    for it in items:
+        for c in it["cards"]:
+            if _is_box_signal(c):
+                counts[names[c["source"]]] += 1
+    return counts
+
+
+def without_box_signals(items):
+    """The items minus their box signal rows, and minus files that held nothing else (inputs are not changed).
+
+    The exam and the contributor count read items directly, so box signal rows are removed before them.
+    """
+    kept = []
+    for it in items:
+        cards = [c for c in it["cards"] if not _is_box_signal(c)]
+        if cards:
+            kept.append({**it, "cards": cards})
+    return kept
+
+
 def build_samples(items, valid_ids=None, split=None):
     """Merge cards into samples keyed by (photoId, box rounded to 0.01).
 
@@ -186,6 +238,8 @@ def build_samples(items, valid_ids=None, split=None):
         if split and it["split"] != split:
             continue
         for c in it["cards"]:
+            if _is_box_signal(c):
+                continue
             vote = _vote(it, c)
             if valid_ids is not None and vote.kind == "card" and vote.card_id not in valid_ids:
                 continue

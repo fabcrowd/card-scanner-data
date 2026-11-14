@@ -90,6 +90,23 @@ class Run(unittest.TestCase):
             m = json.loads(read(os.path.join(out, "manifest.json")))
             self.assertEqual((m["exam"]["n"], m["improved"]), (0, False))
 
+    def test_box_signal_rows_change_no_output_and_are_counted(self):
+        with tempfile.TemporaryDirectory() as plain, tempfile.TemporaryDirectory() as extra, tempfile.TemporaryDirectory() as out1, tempfile.TemporaryDirectory() as out2:
+            self.build(plain)
+            self.build(extra)
+            # Signals beside real cards, inside the exam photo (an "unknown" row must not disqualify it), and alone from a new install.
+            h.write_item(extra, h.item(install=1, split="exam", photo=h.photo_id(50, "exam"), received="2026-10-15T13:00:00.000Z",
+                                       cards=[h.signal_card("drawn", box=(0.6, 0.6, 0.2, 0.2)), h.signal_card("removed", box=(0.7, 0.1, 0.2, 0.2))]), "e2.json")
+            h.write_item(extra, h.item(install=11, photo=h.photo_id(60, "teach"), cards=[h.signal_card("put-back"), h.signal_card("drawn", answer={"cardId": "c-1"}, box=(0.5, 0.5, 0.2, 0.2))]), "s1.json")
+            a = run_pipeline(data_dir=plain, out_dir=out1, pins=PINS, embedder=FakeEmbedder(), modules={}, catalog=catalog(), **COMMON)
+            b = run_pipeline(data_dir=extra, out_dir=out2, pins=PINS, embedder=FakeEmbedder(), modules={}, catalog=catalog(), **COMMON)
+            for name in ("community-pack.bin", "manifest.json"):
+                self.assertEqual(read(os.path.join(out1, name)), read(os.path.join(out2, name)), name)
+            self.assertEqual(b.pop("boxSignals"), {"drawn": 2, "removed": 1, "putBack": 1})
+            self.assertEqual(a.pop("boxSignals"), {"drawn": 0, "removed": 0, "putBack": 0})
+            self.assertEqual(a, b)  # includes contributionsDropped: valid signal files are not dropped
+            self.assertEqual(b["contributionsDropped"], 0)
+
     def test_a_hostile_image_is_skipped_not_fatal(self):
         class Strict(FakeEmbedder):
             def __call__(self, jpeg_bytes):

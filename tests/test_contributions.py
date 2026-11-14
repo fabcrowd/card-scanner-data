@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 import helpers as h
-from pipeline.contributions import build_samples, load_contributions, split_for, validate_contribution
+from pipeline.contributions import build_samples, count_box_signals, load_contributions, split_for, validate_contribution, without_box_signals
 
 
 class SplitRule(unittest.TestCase):
@@ -62,6 +62,101 @@ class Validation(unittest.TestCase):
         for answer in ({"cardId": "x-1"}, {"notACard": True}, {"unknown": True}):
             it = h.item(cards=[h.card(answer=answer)])
             self.assertIsNone(validate_contribution(it), answer)
+
+
+class BoxSignals(unittest.TestCase):
+    def ok(self, c):
+        self.assertIsNone(validate_contribution(h.item(cards=[c])))
+
+    def refused(self, c):
+        self.assertIsNotNone(validate_contribution(h.item(cards=[c])))
+
+    def test_each_box_signal_source_is_accepted_with_a_detector(self):
+        for source in ("drawn", "removed", "put-back"):
+            self.ok(h.signal_card(source=source))
+
+    def test_detector_kinds_score_and_aspect_bounds(self):
+        for kind in ("found", "missed", "hidden", "tooSmall"):
+            self.ok(h.signal_card(source="drawn", kind=kind))
+        for score in (None, 0, 1, 0.5):
+            self.ok(h.signal_card(score=score))
+        for aspect in (0.05, 20, 1.4):
+            self.ok(h.signal_card(aspect=aspect))
+
+    def test_a_malformed_detector_is_refused(self):
+        self.refused(h.signal_card(kind="lost"))
+        for score in (-0.1, 1.1, True, "0.5", float("nan")):
+            self.refused(h.signal_card(score=score))
+        for aspect in (0.04, 20.1, True, None, "1", float("inf"), float("nan")):
+            self.refused(h.signal_card(aspect=aspect))
+        for det in ({"score": 0.5, "aspect": 1}, {"score": 0.5, "aspect": 1, "kind": "found", "x": 1}, [], None, "found"):
+            c = h.signal_card()
+            c["detector"] = det
+            self.refused(c)
+
+    def test_a_box_signal_row_without_a_detector_is_refused(self):
+        for source in ("drawn", "removed", "put-back"):
+            c = h.signal_card(source=source)
+            del c["detector"]
+            self.refused(c)
+
+    def test_a_detector_on_an_old_source_row_is_refused(self):
+        for source in ("pick", "wrong-card", "confirm"):
+            self.refused(h.card(source=source, detector={"score": 0.5, "aspect": 1, "kind": "found"}))
+
+    def test_box_signal_answers(self):
+        self.ok(h.signal_card(source="drawn", answer={"cardId": "base1-4"}))
+        self.ok(h.signal_card(source="drawn", answer={"unknown": True}))
+        for source in ("removed", "put-back"):
+            self.refused(h.signal_card(source=source, answer={"cardId": "base1-4"}))
+        for source in ("drawn", "removed", "put-back"):
+            self.refused(h.signal_card(source=source, answer={"notACard": True}))
+
+    def test_old_rows_still_validate_as_before(self):
+        for source in ("pick", "wrong-card", "confirm"):
+            self.ok(h.card(source=source))
+
+    def test_count_box_signals_counts_raw_rows_by_source(self):
+        items = [
+            h.item(cards=[h.card(), h.signal_card("drawn"), h.signal_card("drawn", answer={"cardId": "x-1"})]),
+            h.item(install=2, cards=[h.signal_card("removed"), h.signal_card("removed"), h.signal_card("put-back")]),
+        ]
+        self.assertEqual(count_box_signals(items), {"drawn": 2, "removed": 2, "putBack": 1})
+        self.assertEqual(count_box_signals([h.item()]), {"drawn": 0, "removed": 0, "putBack": 0})
+        self.assertEqual(count_box_signals([]), {"drawn": 0, "removed": 0, "putBack": 0})
+
+    def test_samples_are_identical_with_or_without_box_signal_rows(self):
+        p = h.photo_id(1, "teach")
+        plain = [
+            h.item(install=1, photo=p, cards=[h.card("c-1", box=(0.1, 0.1, 0.3, 0.3))]),
+            h.item(install=2, photo=p, cards=[h.card("c-1", box=(0.1, 0.1, 0.3, 0.3))]),
+        ]
+        extra = [
+            h.item(install=1, photo=p, cards=[h.card("c-1", box=(0.1, 0.1, 0.3, 0.3)), h.signal_card("drawn", answer={"cardId": "c-9"}, box=(0.1, 0.1, 0.3, 0.3)),
+                                              h.signal_card("removed", box=(0.6, 0.6, 0.2, 0.2))]),
+            h.item(install=2, photo=p, cards=[h.card("c-1", box=(0.1, 0.1, 0.3, 0.3))]),
+            h.item(install=3, photo=h.photo_id(2, "teach"), cards=[h.signal_card("put-back", box=(0.5, 0.5, 0.2, 0.2))]),
+        ]
+        self.assertEqual(build_samples(extra, valid_ids={"c-1"}), build_samples(plain, valid_ids={"c-1"}))
+        self.assertEqual(build_samples(extra), build_samples(plain))
+
+    def test_a_file_of_only_box_signal_rows_yields_no_sample(self):
+        it = h.item(cards=[h.signal_card("drawn"), h.signal_card("removed", box=(0.5, 0.5, 0.2, 0.2))])
+        self.assertEqual(build_samples([it]), [])
+
+    def test_valid_box_signal_files_are_not_counted_as_dropped(self):
+        with tempfile.TemporaryDirectory() as root:
+            h.write_item(root, h.item(cards=[h.signal_card("drawn")]), "a.json")
+            items, dropped = load_contributions(root)
+            self.assertEqual((len(items), dropped), (1, 0))
+
+    def test_without_box_signals_removes_rows_and_emptied_files(self):
+        keep = h.item(install=1, cards=[h.card(), h.signal_card("drawn")])
+        gone = h.item(install=2, cards=[h.signal_card("removed")])
+        out = without_box_signals([keep, gone])
+        self.assertEqual(len(out), 1)
+        self.assertEqual([c["source"] for c in out[0]["cards"]], ["pick"])
+        self.assertEqual(len(keep["cards"]), 2)  # the input is not changed
 
 
 class Loading(unittest.TestCase):
