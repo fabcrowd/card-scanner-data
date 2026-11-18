@@ -25,7 +25,8 @@ from .consensus import promote
 from .contributions import build_samples, count_box_signals, load_contributions, without_box_signals
 from .embed import ClipEmbedder
 from .exam import TOP_K, exam_cases, score_exam
-from .manifest import ASSET_FILES, build_manifest, is_improved, manifest_bytes
+from .manifest import ASSET_FILES, MIN_EXAM_CASES, build_manifest, is_improved, manifest_bytes
+from .new_sets import read_extra
 from .pack import read_pack, write_pack
 from .regression import load_regression
 
@@ -130,18 +131,37 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
 
     if "gate" in modules:
         empty = (np.zeros((0, 512), dtype=np.float32), [])
+        # catalogExtra goes in too: the replay searches the catalog plus these rows, before (live's) and after (tonight's).
         verdict = modules["gate"].evaluate(
-            {k: parts[k] for k in LEARNED if k in parts}, live, (exam_emb, exam_truths), regression if has_regression else empty, catalog=catalog,
+            {k: parts[k] for k in (*LEARNED, "catalogExtra") if k in parts}, live, (exam_emb, exam_truths), regression if has_regression else empty,
+            catalog=catalog,
         )
+        replay = verdict.get("newCards")
+        if replay and has_regression:
+            print(
+                f"new-card rows are the first hit on {replay['firstHit']['before']} of {regression_result_n(verdict)} regression rows before and "
+                f"{replay['firstHit']['after']} after; correct reads lost {replay['lost']}, gained {replay['gained']}"
+            )
         exam = {**_scores(verdict["exam"]), "wrongAtHigh": verdict["wrongHigh"]}
         regression_result = _scores(verdict["regression"]) if has_regression else None
         improved = bool(verdict["improved"])
         outcomes = verdict.get("outcomes")
-        # A night that only adds cards changes nothing the gate can measure. It may ship when what was learned is
-        # byte-identical to the live bundle and the fixed regression set shows no drop.
+        # A night that only adds cards changes what the learned parts do not. It may ship when what was learned is
+        # byte-identical to the live bundle and the replay over the catalog plus the new-card rows (gate.evaluate) shows
+        # no fewer correct reads and no more confident wrong reads than before. An empty memory pack counts as
+        # equal to no live memory part (the first night after a model change, when the old live bundle was ignored).
         if not improved and new_cards and new_cards["added"] and regression_result and regression_result["n"] > 0:
-            same = all(parts.get(k) == live.get(k) for k in LEARNED)
-            improved = same and regression_result["after"] >= regression_result["before"]
+            same = all(
+                parts.get(k) == live.get(k) or (k == "memory" and k not in live and not pack.card_ids)
+                for k in LEARNED
+            )
+            improved = (
+                same
+                and regression_result["after"] >= regression_result["before"]
+                and verdict["wrongHigh"]["after"] <= verdict["wrongHigh"]["before"]
+                # the signer (scripts/sign_release.py _improved_is_supported) refuses an exam drop once the exam has enough cases
+                and not (exam["n"] >= MIN_EXAM_CASES and exam["after"] < exam["before"])
+            )
     else:
         exam = score_exam(
             exam_emb, exam_truths, catalog, pack.card_ids, pack.dequantized(),
@@ -157,6 +177,9 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
             )
             regression_result = _scores(scored)
         improved = is_improved(exam, regression_result)
+
+    if improved and _shrinks(live.get("catalogExtra"), parts.get("catalogExtra"), new_cards):  # dropped rows are accounted for inside
+        improved = False
 
     manifest = build_manifest(pins, clip_hash, parts, base_url, exam, regression_result, improved, seq, issued_at)
     raw = manifest_bytes(manifest)
@@ -198,6 +221,38 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
     return summary
 
 
+def regression_result_n(verdict):
+    return verdict["regression"]["n"]
+
+
+def _extra_count(data):
+    """Cards in a catalogExtra.bin, or None when it cannot be read."""
+    try:
+        return len(read_extra(data)[0])
+    except (ValueError, TypeError):
+        return None
+
+
+def _shrinks(live_extra, candidate_extra, new_cards):
+    """True (with a log line) when the live bundle is ours and has catalogExtra cards the candidate does not keep. `live` is
+    {} when the live bundle was ignored (another model or crop), so that night is exempt and never gets here."""
+    if not live_extra:
+        return False
+    before = _extra_count(live_extra)
+    if before is None:
+        print("not shipping: the live catalogExtra is unreadable, so tonight's file cannot be shown to keep its cards")
+        return True
+    after = (new_cards or {}).get("total")
+    if after is None:
+        after = _extra_count(candidate_extra) if candidate_extra else 0
+    # Rows `build` dropped on purpose tonight (id now in the catalog, failed re-validation) are not a shrink.
+    allowed = before - ((new_cards or {}).get("dropped") or 0)
+    if after is None or after < allowed:
+        print(f"not shipping: the new-card file has {after or 0} cards, the live one {before} ({before - allowed} dropped on purpose): a night must not drop cards")
+        return True
+    return False
+
+
 def _sha256_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -222,8 +277,41 @@ def load_seed(path):
     return [(vectors[i], str(ids[i])) for i in range(len(ids))]
 
 
-def load_live(folder):
-    """The live bundle's parts that exist in `folder` (its release assets), as {name: bytes}."""
+def _is_tag(stored_model, stored_crop, model, crop):
+    """A single string equal to `model` and a single integer equal to `crop` (a float or a string is not a match)."""
+    return (
+        stored_model.shape == () and stored_model.dtype.kind == "U" and str(stored_model) == model
+        and stored_crop.shape == () and stored_crop.dtype.kind in "iu" and int(stored_crop) == crop
+    )
+
+
+def model_tag_ok(path, model, crop):
+    """True when the npz at `path` carries a `model` and `crop` equal to ours. Otherwise says so and returns False, so
+    a regression set or seed made with another recognizer (or an untagged one) is never used."""
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            ok = "model" in z.files and "crop" in z.files and _is_tag(z["model"], z["crop"], model, crop)
+    except Exception:  # noqa: BLE001 - a corrupt file or a pickled object array is "not ours", never a crash
+        ok = False
+    if not ok:
+        print(f"{path} was made with another model (or is untagged): ignored")
+    return ok
+
+
+def load_live(folder, model, crop):
+    """The live bundle's parts that exist in `folder` (its release assets), as {name: bytes}. A bundle whose manifest is
+    unreadable or names another model or crop is ignored ({}), so nothing made with an old model is carried over."""
+    if folder and os.path.isdir(folder):
+        try:
+            with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
+                live_manifest = json.load(f)
+            live_model, live_crop = live_manifest["model"], live_manifest["crop"]
+        except (OSError, ValueError, KeyError, TypeError):
+            print("live bundle has no readable manifest: starting from the plain catalog")
+            return {}
+        if live_model != model or live_crop != crop:
+            print(f"live bundle is model {live_model} crop {live_crop}, not ours: starting from the plain catalog")
+            return {}
     live = {}
     for name, filename in ASSET_FILES.items():
         path = os.path.join(folder, filename) if folder else None
@@ -260,20 +348,22 @@ def main(argv=None):
 
     embedder = ClipEmbedder(paths["clip_visual_int8.onnx"])
     catalog = Catalog.load(paths["catalog.bin.gz"], paths["id_map.json"])
-    live = load_live(args.live_dir)
+    model, crop = hashes["clip_visual_int8.onnx"], pins["cropVersion"]
+    live = load_live(args.live_dir, model, crop)
     new_sets_fn = None
     if not args.no_new_sets:
         from . import new_sets
 
-        new_sets_fn = lambda: new_sets.build(catalog.ids, live.get("catalogExtra"), embedder)  # noqa: E731
+        new_sets_fn = lambda: new_sets.build(catalog.ids, live.get("catalogExtra"), embedder, tag={"model": model, "crop": crop})  # noqa: E731
 
     os.makedirs(args.out, exist_ok=True)
     summary = run_pipeline(
         data_dir=args.data, out_dir=args.out, pins=pins, embedder=embedder, catalog=catalog,
         clip_hash=hashes["clip_visual_int8.onnx"], base_url=args.base_url, seq=args.seq,
         issued_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        regression=load_regression(args.regression) if os.path.exists(args.regression) else None,
-        live=live, new_sets_fn=new_sets_fn, seed_pairs=load_seed(args.seed),
+        regression=load_regression(args.regression) if os.path.exists(args.regression) and model_tag_ok(args.regression, model, crop) else None,
+        live=live, new_sets_fn=new_sets_fn,
+        seed_pairs=load_seed(args.seed) if os.path.exists(args.seed) and model_tag_ok(args.seed, model, crop) else [],
         status_path=os.path.join(args.out, "STATUS.md"), status_history=args.status_history,
     )
     with open(os.path.join(args.out, "summary.json"), "w", encoding="utf-8") as f:

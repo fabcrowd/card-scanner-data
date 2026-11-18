@@ -8,12 +8,16 @@ DIM = 512
 
 
 class Catalog:
-    def __init__(self, vectors, ids):
+    def __init__(self, vectors, ids, names=None):
         vectors = np.asarray(vectors, dtype=np.float32)
         if vectors.ndim != 2 or vectors.shape[1] != DIM or vectors.shape[0] != len(ids):
             raise ValueError("catalog rows and ids do not line up")
         self.vectors = vectors
         self.ids = list(ids)
+        if names is not None and len(names) != len(ids):
+            raise ValueError("catalog names and ids do not line up")
+        # Optional lib/set-choice.js choiceName of each row; None means every card counts as its own name (gate.rival_margin).
+        self.names = None if names is None else list(names)
 
     @classmethod
     def load(cls, bin_gz_path, id_map_path):

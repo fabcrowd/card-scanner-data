@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Builds regression.npz: embeddings and catalog ids of labelled, non-sealed crops. No images are stored.
+"""Builds regression.npz: embeddings and catalog ids of labelled, non-sealed crops. No images are stored. The file also
+carries the model (first 16 hex of the sha256 of --model) and the crop version (pins.json), and the nightly job ignores
+it when they are not its own.
 
     python scripts/build_regression.py --labels labels.json --root <folder with the crops> \
         --model clip_visual_int8.onnx --out regression.npz
@@ -16,7 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline.embed import ClipEmbedder, preprocess  # noqa: E402
-from pipeline.regression import save_regression  # noqa: E402
+from pipeline.regression import save_regression, tag_for  # noqa: E402
 
 
 def is_sealed(path):
@@ -29,6 +31,7 @@ def main():
     ap.add_argument("--root", required=True)
     ap.add_argument("--model", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--pins", default=None, help="pins.json whose cropVersion is stored in the file (default: the template's)")
     args = ap.parse_args()
 
     for path in (args.labels, args.root):
@@ -48,7 +51,8 @@ def main():
         preprocess(data, trusted=True)  # fails early on an unreadable image
         vectors.append(embedder(data, trusted=True))
         ids.append(entry["cardId"])
-    save_regression(args.out, vectors, ids)
+    model, crop = tag_for(args.model, args.pins)
+    save_regression(args.out, vectors, ids, model=model, crop=crop)
     print(f"wrote {len(ids)} rows to {args.out}", file=sys.stderr)
 
 

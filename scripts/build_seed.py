@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # noqa: E402
 
+from pipeline.regression import tag_for  # noqa: E402
 from pipeline.seed import FORBIDDEN, Sources, build_seed, real_crops_from_repo  # noqa: E402
 
 FORBIDDEN_PARTS = FORBIDDEN + ("sealed",)
@@ -27,10 +28,12 @@ def is_forbidden(path):
     return any(word in part.lower() for part in os.path.normpath(os.path.abspath(path)).split(os.sep) for word in FORBIDDEN_PARTS)
 
 
-def save_seed(path, pairs):
-    """seed.npz: float32 embeddings (n, 512) and card ids (n,) as plain unicode, loadable without pickle."""
+def save_seed(path, pairs, model, crop):
+    """seed.npz: float32 embeddings (n, 512), card ids (n,) as plain unicode, and the model and crop that made the
+    embeddings, loadable without pickle."""
     vectors = np.stack([np.asarray(e, dtype=np.float32) for e, _ in pairs]) if pairs else np.zeros((0, 512), dtype=np.float32)
-    np.savez_compressed(path, embeddings=vectors, cardIds=np.array([c for _, c in pairs], dtype="<U64"))
+    np.savez_compressed(path, embeddings=vectors, cardIds=np.array([c for _, c in pairs], dtype="<U64"),
+                        model=np.array(str(model)), crop=np.array(int(crop)))
 
 
 def build(data_dir, meta_path, images_dir, embedder, per_card=1, max_synthetic=None):
@@ -57,7 +60,8 @@ def main(argv=None, embedder=None):
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--meta", required=True)
     ap.add_argument("--catalog-images", required=True)
-    ap.add_argument("--model", help="clip_visual_int8.onnx (unused when an embedder is passed)")
+    ap.add_argument("--model", required=True, help="clip_visual_int8.onnx; its hash is stored in the file (not loaded when an embedder is passed)")
+    ap.add_argument("--pins", default=None, help="pins.json whose cropVersion is stored in the file (default: the template's)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--per-card", type=int, default=1, help="synthetic variants per catalog card")
     ap.add_argument("--max-synthetic", type=int, default=None, help="sample this many catalog cards for variants")
@@ -70,7 +74,8 @@ def main(argv=None, embedder=None):
         pairs, n_real, n_images = build(args.data_dir, args.meta, args.catalog_images, embedder, args.per_card, args.max_synthetic)
     except ValueError as err:
         sys.exit(str(err))
-    save_seed(args.out, pairs)
+    model, crop = tag_for(args.model, args.pins)
+    save_seed(args.out, pairs, model, crop)
     print(f"seed rows {len(pairs)} (real crops {n_real}, catalog images {n_images}) -> {args.out}")
     return len(pairs)
 

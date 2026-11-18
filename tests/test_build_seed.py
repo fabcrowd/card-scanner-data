@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import io
 import json
@@ -45,17 +46,28 @@ def world(root):
 
 
 class BuildSeed(unittest.TestCase):
-    def test_writes_embeddings_and_ids_only_and_reads_back_without_pickle(self):
+    def test_writes_embeddings_ids_and_the_model_tag_and_reads_back_without_pickle(self):
         with tempfile.TemporaryDirectory() as root:
             meta = world(root)
             out = os.path.join(root, "seed.npz")
-            n = build_seed.main(["--data-dir", root, "--meta", meta, "--catalog-images", os.path.join(root, "images"), "--out", out, "--per-card", "2"], embedder=embedder)
+            model = os.path.join(root, "m.onnx")
+            with open(model, "wb") as f:
+                f.write(b"model bytes")
+            pins = os.path.join(root, "pins.json")
+            with open(pins, "w") as f:
+                f.write('{"cropVersion": 3}')
+            n = build_seed.main(["--data-dir", root, "--meta", meta, "--catalog-images", os.path.join(root, "images"), "--model", model,
+                                 "--pins", pins, "--out", out, "--per-card", "2"], embedder=embedder)
             self.assertEqual(n, 1 + 2 * 2)
             with np.load(out, allow_pickle=False) as z:
-                self.assertEqual(sorted(z.files), ["cardIds", "embeddings"])
+                self.assertEqual(sorted(z.files), ["cardIds", "crop", "embeddings", "model"])
                 self.assertEqual(z["embeddings"].shape, (5, 512))
                 self.assertEqual(z["embeddings"].dtype, np.float32)
                 self.assertEqual(list(z["cardIds"]).count("base1-4"), 3)
+                self.assertEqual((str(z["model"]), int(z["crop"])), (hashlib.sha256(b"model bytes").hexdigest()[:16], 3))
+            from pipeline.run import load_seed
+
+            self.assertEqual(len(load_seed(out)), 5)  # the extra keys do not trouble the loader
 
     def test_forbidden_paths_are_refused(self):
         with tempfile.TemporaryDirectory() as root:
@@ -64,7 +76,7 @@ class BuildSeed(unittest.TestCase):
                 os.makedirs(bad)
                 meta = world(bad)
                 with self.assertRaises(SystemExit, msg=name):
-                    build_seed.main(["--data-dir", bad, "--meta", meta, "--catalog-images", os.path.join(bad, "images"), "--out", os.path.join(root, "x.npz")], embedder=embedder)
+                    build_seed.main(["--data-dir", bad, "--meta", meta, "--catalog-images", os.path.join(bad, "images"), "--model", "m", "--out", os.path.join(root, "x.npz")], embedder=embedder)
                 self.assertFalse(os.path.exists(os.path.join(root, "x.npz")))
 
     def test_is_forbidden(self):
