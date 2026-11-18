@@ -47,6 +47,15 @@ class Workflow(unittest.TestCase):
         self.assertIn("--seed seed.npz", BUILD)
         self.assertIn("--base-url", BUILD)
 
+    def test_the_download_of_the_latest_release_names_a_pattern_because_gh_refuses_without_one(self):
+        lines = [
+            line for line in BUILD.splitlines()
+            if "gh release download" in line and re.search(r"--dir live(\s|$)", line)
+        ]
+        self.assertEqual(len(lines), 1)
+        self.assertNotRegex(lines[0], r"gh release download\s+[^-\s]")
+        self.assertIn("--pattern", lines[0])
+
     def test_the_sign_job_signs_per_run_urls_and_publishes_unapproved_bundles_as_prereleases(self):
         self.assertIn("--base-url", SIGN)
         self.assertNotIn("--url ", SIGN)

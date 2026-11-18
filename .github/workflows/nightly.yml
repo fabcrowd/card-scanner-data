@@ -84,7 +84,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p live live-status
-          gh release download --repo "${RELEASE_REPO}" --dir live || echo "no live bundle yet"
+          gh release download --repo "${RELEASE_REPO}" --pattern '*' --dir live || echo "no live bundle yet"
           gh release download status --repo "${RELEASE_REPO}" --pattern status.json --dir live-status || echo "no status history yet"
 
       - name: Build bundle
