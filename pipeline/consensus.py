@@ -26,6 +26,9 @@ import numpy as np
 CLUSTER_SIM = 0.95
 MAX_INSTALL_SHARE = 0.10
 MAX_ROWS_PER_CARD = 5
+# The signer (scripts/sign_release.py MAX_ENTRIES) refuses a memory pack over this many rows. It is self-contained and
+# imports nothing from here, so a test pins the two numbers equal.
+MAX_PACK_ROWS = 20000
 
 
 @dataclass
@@ -111,7 +114,15 @@ def cap_per_card(rows, max_per_card=MAX_ROWS_PER_CARD):
     return kept
 
 
-def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=MAX_INSTALL_SHARE, max_per_card=MAX_ROWS_PER_CARD):
+def cap_total(rows, max_rows=MAX_PACK_ROWS):
+    """At most max_rows rows in all; rows two installs agreed on are kept first, then the rest by a hash of the sample key."""
+    if len(rows) <= max_rows:
+        return list(rows)
+    return sorted(rows, key=lambda r: (not r.multi, _order_key(r)))[:max_rows]
+
+
+def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=MAX_INSTALL_SHARE, max_per_card=MAX_ROWS_PER_CARD,
+            max_rows=MAX_PACK_ROWS):
     """TEACH samples -> promoted pack rows.
 
     samples: Sample objects, all split "teach"; embeddings: matching (n, 512) unit vectors;
@@ -119,7 +130,7 @@ def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=
     """
     if any(s.split != "teach" for s in samples):
         raise ValueError("only teach samples may be promoted")
-    stats = {"samples": len(samples), "clusters": 0, "heldConflict": 0, "heldUnconfirmed": 0, "cappedOut": 0, "cappedCard": 0}
+    stats = {"samples": len(samples), "clusters": 0, "heldConflict": 0, "heldUnconfirmed": 0, "cappedOut": 0, "cappedCard": 0, "cappedTotal": 0}
     groups = {}
     for i, c in enumerate(cluster(embeddings, cluster_sim) if len(samples) else []):
         groups.setdefault(c, []).append(i)
@@ -149,6 +160,7 @@ def promote(samples, embeddings, neighbours, cluster_sim=CLUSTER_SIM, max_share=
     stats["cappedOut"] = len(rows) - len(kept)
     per_card = cap_per_card(kept, max_per_card)
     stats["cappedCard"] = len(kept) - len(per_card)
-    kept = per_card
+    kept = cap_total(per_card, max_rows)
+    stats["cappedTotal"] = len(per_card) - len(kept)
     kept.sort(key=lambda r: (r.card_id, _order_key(r)))
     return Promotion(kept, stats)

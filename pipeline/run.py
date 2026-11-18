@@ -94,7 +94,8 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
     items, dropped = load_contributions(data_dir)
     box_signals = count_box_signals(items)
     items = without_box_signals(items)
-    valid_ids = set(catalog.ids)
+    new_cards = new_sets_fn() if new_sets_fn else None
+    valid_ids = set(catalog.ids) | _extra_ids(new_cards, live.get("catalogExtra"))
 
     teach, teach_emb, teach_failed = _embed(build_samples(items, valid_ids=valid_ids, split="teach"), embedder)
     if len(teach):
@@ -118,7 +119,6 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
         if check:
             parts["check"] = check
 
-    new_cards = new_sets_fn() if new_sets_fn else None
     if new_cards and new_cards.get("bytes"):
         parts["catalogExtra"] = new_cards["bytes"]
 
@@ -231,6 +231,19 @@ def _extra_count(data):
         return len(read_extra(data)[0])
     except (ValueError, TypeError):
         return None
+
+
+def _extra_ids(new_cards, live_extra):
+    """Ids of the new-set cards this run knows: tonight's file when there is one, else the live one, plus the ids tonight added.
+    Votes for them are valid, so a correction to a new card is counted instead of silently vanishing."""
+    data = (new_cards or {}).get("bytes") or live_extra
+    ids = set((new_cards or {}).get("added") or [])
+    if data:
+        try:
+            ids |= {c["id"] for c in read_extra(data)[0]}
+        except (ValueError, TypeError):
+            print("the new-card file could not be read, so votes for new cards are not counted tonight")
+    return ids
 
 
 def _shrinks(live_extra, candidate_extra, new_cards):

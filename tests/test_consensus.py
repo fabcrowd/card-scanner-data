@@ -109,6 +109,56 @@ class CardCap(unittest.TestCase):
         self.assertEqual(res.stats["cappedCard"], 11)
 
 
+class TotalCap(unittest.TestCase):
+    """The signer (scripts/sign_release.py MAX_ENTRIES) refuses a memory pack over its limit, so promote must never write one."""
+
+    class Row(CardCap.Row):
+        pass
+
+    def test_the_pipeline_limit_is_the_signers_limit(self):
+        import importlib.util
+        import os
+
+        import pipeline.consensus as consensus
+
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "sign_release.py")
+        spec = importlib.util.spec_from_file_location("sign_release_pin_rows", path)
+        signer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(signer)
+        self.assertEqual(consensus.MAX_PACK_ROWS, signer.MAX_ENTRIES)
+
+    def test_a_promotion_over_the_cap_is_cut_to_it_keeping_two_install_rows_first(self):
+        import pipeline.consensus as consensus
+
+        rows = [self.Row(f"c-{i}", i, multi=i < 4) for i in range(10)]
+        kept = consensus.cap_total(rows, 6)
+        self.assertEqual(len(kept), 6)
+        self.assertEqual(sum(r.multi for r in kept), 4)  # all four agreed rows survive
+        singles = sorted((r for r in rows if not r.multi), key=consensus._order_key)[:2]
+        self.assertEqual({r.card_id for r in kept if not r.multi}, {r.card_id for r in singles})  # the rest by the sample-key hash
+
+    def test_the_cut_does_not_depend_on_input_order(self):
+        import pipeline.consensus as consensus
+
+        rows = [self.Row(f"c-{i}", i, multi=i % 3 == 0) for i in range(30)]
+        a = {r.card_id for r in consensus.cap_total(rows, 10)}
+        b = {r.card_id for r in consensus.cap_total(list(reversed(rows)), 10)}
+        self.assertEqual(a, b)
+
+    def test_a_promotion_at_or_under_the_cap_is_untouched(self):
+        import pipeline.consensus as consensus
+
+        rows = [self.Row(f"c-{i}", i) for i in range(6)]
+        self.assertEqual(len(consensus.cap_total(rows, 6)), 6)
+
+    def test_promote_applies_the_total_cap_and_counts_what_it_cut(self):
+        specs = [(i, i, f"c-{i}", 20 + i, 10 + i) for i in range(1, 9)]
+        samples, emb = make(specs)
+        res = promote(samples, emb, [{s} for s in ("c-%d" % i for i in range(1, 9))], max_share=1.0, max_rows=5)
+        self.assertEqual(len(res.rows), 5)
+        self.assertEqual(res.stats["cappedTotal"], 3)
+
+
 class Cap(unittest.TestCase):
     class Row:
         def __init__(self, owner, i, multi=False):

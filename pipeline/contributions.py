@@ -1,7 +1,7 @@
 """Loading, validating and de-duplicating contributions (schema v1, see tools/relay/src/validate.js).
 
 These are the relay's stored files: `install` is the 16-hex HMAC of the real install id and `received` is the
-server's timestamp. The client-written `day` is only a label here: every ordering and every day count uses `received`.
+relay's receive date (`YYYY-MM-DD`, or a full timestamp in older files). The client-written `day` is only a label here: every ordering and every day count uses `received`.
 """
 import base64
 import datetime
@@ -14,7 +14,8 @@ MAX_CARDS = 30
 MAX_CROP_CHARS = 40000
 
 _HEX16 = re.compile(r"[0-9a-f]{16}")
-_RECEIVED = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
+# The relay stores the receipt day only; files committed earlier carry a full timestamp. Both are read (as validate.js does).
+_RECEIVED = re.compile(r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}\.\d{3}Z)?")
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 _CARD_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _BASE64 = re.compile(r"[A-Za-z0-9+/]+={0,2}")

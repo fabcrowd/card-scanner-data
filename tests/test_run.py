@@ -122,6 +122,38 @@ class Run(unittest.TestCase):
             summary = run_pipeline(data_dir=root, out_dir=out, pins=PINS, embedder=Strict(), modules={}, catalog=catalog(), **COMMON)
             self.assertIn("embedFailed", summary)
 
+    # --- votes for cards that only the new-sets extra catalog knows ------------------------------------------------------
+    def new_card_extra(self, ids=("sv9-1",)):
+        from pipeline import new_sets
+
+        cards = [{"id": i, "name": f"New {i}", "set": "sv9", "setName": "S", "number": str(k), "image": "https://assets.tcgdex.net/x"} for k, i in enumerate(ids)]
+        data = new_sets.write_extra(cards, np.zeros((len(ids), 512), dtype=np.int8))
+        return lambda: {"bytes": data, "added": list(ids), "sets": ["sv9"], "total": len(ids)}
+
+    def vote_night(self, votes, new_sets_fn):
+        """One shared crop (basis 1, nearest to catalog card c-1); votes = [(install, card id, server day)]. Returns the pack's card ids
+        other than c-3, which nine other installs agree on so that no single install owns too large a share of the rows."""
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
+            for n, (install, card_id, day) in enumerate(votes):
+                h.write_item(root, h.item(install=install, photo=h.photo_id(1, "teach"), received=f"{day}T12:00:00.000Z", cards=[h.card(card_id, seed=10)]), f"v{n}.json")
+            for k in range(3, 12):
+                h.write_item(root, h.item(install=k, photo=h.photo_id(100 + k, "teach"), received=f"2026-11-{k:02d}T12:00:00.000Z", cards=[h.card("c-3", seed=30)]), f"f{k}.json")
+            run_pipeline(data_dir=root, out_dir=out, pins=PINS, embedder=FakeEmbedder(), modules={}, catalog=catalog(), new_sets_fn=new_sets_fn, **COMMON)
+            return [i for i in read_pack(read(os.path.join(out, "community-pack.bin"))).card_ids if i != "c-3"]
+
+    def test_two_installs_agreeing_on_a_new_set_card_make_a_memory_row(self):
+        ids = self.vote_night([(1, "sv9-1", "2026-11-17"), (2, "sv9-1", "2026-11-18")], self.new_card_extra())
+        self.assertEqual(ids, ["sv9-1"])
+
+    def test_a_vote_for_a_new_set_card_is_not_outvoted_by_a_catalog_look_alike(self):
+        # c-1 is in the catalog's top-20 for the crop, so on its own it would be promoted; the new-card vote makes it a conflict.
+        ids = self.vote_night([(1, "sv9-1", "2026-11-17"), (2, "c-1", "2026-11-18")], self.new_card_extra())
+        self.assertEqual(ids, [])
+
+    def test_a_vote_for_an_id_in_neither_the_catalog_nor_the_new_cards_is_still_dropped(self):
+        ids = self.vote_night([(1, "gone-9", "2026-11-17"), (2, "gone-9", "2026-11-18")], self.new_card_extra())
+        self.assertEqual(ids, [])
+
 
 class Parts(unittest.TestCase):
     """The optional trainers, gate, seed and status modules are called with the right data and their output is shipped."""
@@ -505,6 +537,18 @@ class Parts(unittest.TestCase):
         with unittest.mock.patch("importlib.import_module", side_effect=ModuleNotFoundError("numpy", name="numpy")):
             with self.assertRaises(ModuleNotFoundError):
                 optional_modules()
+
+
+class ExtraIds(unittest.TestCase):
+    def test_a_malformed_extra_file_says_so_and_keeps_the_ids_tonight_added(self):
+        from pipeline.run import _extra_ids
+
+        log = io.StringIO()
+        with contextlib.redirect_stdout(log):
+            ids = _extra_ids({"bytes": b"xx", "added": ["new-1"]}, None)
+        self.assertEqual(ids, {"new-1"})
+        self.assertIn("new-card file could not be read", log.getvalue())
+        self.assertIn("votes for new cards are not counted tonight", log.getvalue())
 
 
 MODEL = hashlib.sha256(b"clip").hexdigest()[:16]

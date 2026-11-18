@@ -50,7 +50,7 @@ def signal_card(source="removed", kind="found", score=0.7, aspect=0.71, answer=N
     return card(answer=answer or {"unknown": True}, source=source, detector={"score": score, "aspect": aspect, "kind": kind}, **kw)
 
 
-def item(install=1, photo=None, split="teach", cards=None, day="2026-10-15", received="2026-10-15T12:00:00.000Z"):
+def item(install=1, photo=None, split="teach", cards=None, day="2026-10-15", received="2026-10-15"):
     photo = photo or photo_id(1, split)
     return {
         "v": 1,

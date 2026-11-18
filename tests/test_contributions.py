@@ -48,6 +48,16 @@ class Validation(unittest.TestCase):
         self.bad(lambda i: i["cards"][0].update(source="auto"))
         self.bad(lambda i: i["model"].update(crop=-1))
 
+    def test_received_as_the_date_the_relay_writes_now_is_valid(self):
+        self.assertIsNone(validate_contribution(h.item(received="2026-11-18")))
+
+    def test_received_as_the_older_full_timestamp_is_still_valid(self):
+        self.assertIsNone(validate_contribution(h.item(received="2026-11-18T12:00:00.000Z")))
+
+    def test_received_that_is_neither_form_is_rejected(self):
+        for bad in ("2026-11-18T12:00:00Z", "2026-11-18T", "2026-11-18 ", "18-11-2026", "2026-11-18\n"):
+            self.bad(lambda i, v=bad: i.update(received=v))
+
     def test_a_trailing_newline_does_not_pass_any_pattern(self):
         # Python's $ matches before a final newline; fullmatch must not.
         nl = chr(10)
@@ -172,6 +182,15 @@ class Loading(unittest.TestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(dropped, 2)
 
+    def test_date_only_and_full_timestamp_files_load_in_day_then_file_name_order(self):
+        with tempfile.TemporaryDirectory() as root:
+            h.write_item(root, h.item(install=1, photo=h.photo_id(1, "teach"), received="2026-11-18"), "b.json")
+            h.write_item(root, h.item(install=2, photo=h.photo_id(2, "teach"), received="2026-11-18"), "a.json")
+            h.write_item(root, h.item(install=3, photo=h.photo_id(3, "teach"), received="2026-11-17T23:59:59.000Z"), "z.json")
+            items, dropped = load_contributions(root)
+            self.assertEqual(dropped, 0)
+            self.assertEqual([i["install"] for i in items], [h.install_id(3), h.install_id(2), h.install_id(1)])
+
     def test_no_contributions_folder_is_empty(self):
         with tempfile.TemporaryDirectory() as root:
             self.assertEqual(load_contributions(root), ([], 0))
@@ -206,6 +225,18 @@ class Samples(unittest.TestCase):
         later = h.item(install=1, photo=p, received="2026-10-16T10:00:00.000Z", cards=[h.card("c-1", seed=99)])
         (sample,) = build_samples([later, first])
         self.assertEqual(sample.crop, base64.b64decode(first["cards"][0]["crop"]))
+
+    def test_date_only_received_gives_the_day_and_items_of_one_day_keep_input_order(self):
+        p = h.photo_id(1, "teach")
+        a = h.item(install=1, photo=p, received="2026-11-18", cards=[h.card("c-1", seed=11)])
+        b = h.item(install=1, photo=p, received="2026-11-18", cards=[h.card("c-2", seed=99)])
+        c = h.item(install=1, photo=p, received="2026-11-19", cards=[h.card("c-3", seed=55)])
+        (sample,) = build_samples([a, b])
+        vote = sample.votes[h.install_id(1)]
+        self.assertEqual((vote.day, vote.days, vote.card_id), ("2026-11-18", {"2026-11-18"}, "c-2"))  # the later in the list wins within a day
+        (sample,) = build_samples([a, b, c])
+        self.assertEqual(sample.votes[h.install_id(1)].days, {"2026-11-18", "2026-11-19"})
+        self.assertEqual(sample.crop, base64.b64decode(a["cards"][0]["crop"]))
 
     def test_different_boxes_stay_separate(self):
         p = h.photo_id(1, "teach")
