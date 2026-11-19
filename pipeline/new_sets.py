@@ -19,6 +19,7 @@ import urllib.request
 
 import numpy as np
 
+from .image_hosts import POKEMONTCG_IMAGE_HOST, TCGDEX_IMAGE_HOST
 from .pack import DIM, MAX_HEADER, SCALE, VERSION
 
 TCGDEX = "https://api.tcgdex.net/v2/en"
@@ -28,9 +29,8 @@ DIGITAL_ONLY = re.compile(r"^(A\d|B\d|P-A)")
 # Cards TCGdex lists without a picture get one from pokemontcg.io when number and name match (see _fallback_pictures).
 # The source is the static per-set files of github.com/PokemonTCG/pokemon-tcg-data (one cheap GET per set and spelling).
 POKEMONTCG_DATA = "https://raw.githubusercontent.com/PokemonTCG/pokemon-tcg-data/master/cards/en"
-POKEMONTCG_IMAGE_HOST = "https://images.pokemontcg.io/"
-# Every TCGdex picture in the shipped files so far comes from this host.
-TCGDEX_IMAGE_HOST = "https://assets.tcgdex.net/"
+# The picture hosts (every TCGdex picture in the shipped files so far comes from the first) live in image_hosts.py,
+# which the signer also reads.
 MAX_FALLBACK_SETS = 150
 FALLBACK_SECONDS = 600  # wall-clock budget of the whole picture-fallback step in one run
 EMBED_SECONDS = 1800  # wall-clock budget of the picture download and embedding loop in one run

@@ -44,6 +44,20 @@ class Drift(unittest.TestCase):
             self.assertIn(asset["sha256"], block.group(0), asset["name"])
             self.assertIn(f'release: "{asset["release"]}"', block.group(0), asset["name"])
 
+    def test_a_re_issued_manifest_is_accepted_and_leaves_a_week_of_margin_before_the_extension_drops_it(self):
+        from pipeline.run import REISSUE_AFTER_DAYS
+
+        text = source("bundle.js")
+        day_ms = 1
+        for factor in re.search(r"const\s+DAY_MS\s*=\s*([\d\s*]+);", text).group(1).split("*"):
+            day_ms *= int(factor)
+        max_age = re.search(r"const\s+MAX_MANIFEST_AGE_MS\s*=\s*(\d+)\s*\*\s*DAY_MS\s*;", text)
+        self.assertIsNotNone(max_age, "MAX_MANIFEST_AGE_MS not found in bundle.js")
+        max_age_days = int(max_age.group(1)) * day_ms / (24 * 3600 * 1000)
+        self.assertGreaterEqual(max_age_days - REISSUE_AFTER_DAYS, 7)
+        # The extension refuses only a LOWER seq or an old issuedAt: a re-issue (same content, higher seq, fresh time) passes.
+        self.assertIn("manifest.seq < minSeq || age > MAX_MANIFEST_AGE_MS", text)
+
     def test_embedding_constants_match_embed_js(self):
         text = source("embed.js")
         self.assertIn(f"EMBEDDING_VERSION = {PINS['cropVersion']};", text)

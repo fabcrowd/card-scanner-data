@@ -1,6 +1,7 @@
 """End to end with a fake embedder: contributions on disk in, pack and unsigned manifest out."""
 import base64
 import contextlib
+import datetime
 import hashlib
 import io
 import json
@@ -16,13 +17,17 @@ import numpy as np
 
 import helpers as h
 from pipeline.catalog import Catalog
+from pipeline.manifest import build_manifest, manifest_bytes
+from pipeline.names import NameTruth
 from pipeline.pack import read_pack
 from pipeline.regression import save_regression
 from pipeline.run import load_seed, model_tag_ok, optional_modules, run_pipeline
 
 IDS = [f"c-{k}" for k in range(8)]
 PINS = {"cropVersion": 2, "dim": 512, "reference": {"min": 0.93, "margin": 0.02}, "highTier": {"sim": 0.82, "gap": 0.025}}
-COMMON = dict(clip_hash="77538aade655907f", base_url="https://example.com/dl/", seq=9, issued_at="2026-10-15T03:17:00Z")
+UTC = datetime.timezone.utc
+NIGHT = datetime.datetime(2026, 10, 15, 3, 17, 0, tzinfo=UTC)
+COMMON = dict(clip_hash="77538aade655907f", base_url="https://example.com/dl/", seq=9, clock=lambda: NIGHT)
 
 
 def read(path, mode="rb"):
@@ -410,6 +415,332 @@ class Parts(unittest.TestCase):
         self.assertIs(m["improved"], True)
         self.assertIn("first hit on 0 of 2 regression rows before and 0 after; correct reads lost 0, gained 0", log.getvalue())
 
+    def name_regression(self):
+        crop = h.unit(3, noise=0.05)
+        return (np.stack([crop, crop]), [NameTruth("c three", frozenset({"c-3"}))] * 2), crop
+
+    @staticmethod
+    def named_extra_result(vectors, names, ids=("sv9-1",)):
+        from pipeline import new_sets
+
+        cards = [{"id": i, "name": n, "set": "sv9", "setName": "S", "number": str(k), "image": "https://assets.tcgdex.net/x"} for k, (i, n) in enumerate(zip(ids, names))]
+        data = new_sets.write_extra(cards, np.rint(np.stack(vectors) * 127).astype(np.int8))
+        return {"bytes": data, "added": list(ids), "sets": ["sv9"], "total": len(ids)}
+
+    def test_a_cards_only_night_whose_new_row_with_another_name_steals_a_name_row_does_not_ship(self):
+        self.spy_gate()
+        regression, crop = self.name_regression()
+        extra = self.named_extra_result([crop], ["Somebody Else"])
+        log = io.StringIO()
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out, contextlib.redirect_stdout(log):
+            _, m = self.go(root, out, regression=regression, new_sets_fn=lambda: extra, live={})
+        self.assertIs(m["improved"], False)
+        self.assertEqual(m["regression"], {"before": 1.0, "after": 0.0, "n": 2})
+        self.assertIn("new-card rows are the first hit on 0 of 2 regression rows before and 2 after; correct reads lost 2, gained 0", log.getvalue())
+
+    def test_a_cards_only_night_with_a_name_row_set_and_no_steal_ships(self):
+        self.spy_gate()
+        regression, _ = self.name_regression()
+        extra = self.named_extra_result([h.unit(100)], ["Somebody Else"])
+        log = io.StringIO()
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out, contextlib.redirect_stdout(log):
+            _, m = self.go(root, out, regression=regression, new_sets_fn=lambda: extra, live={})
+        self.assertIs(m["improved"], True)
+        self.assertEqual(m["regression"], {"before": 1.0, "after": 1.0, "n": 2})
+        self.assertIn("first hit on 0 of 2 regression rows before and 0 after; correct reads lost 0, gained 0", log.getvalue())
+
+    def test_a_cards_only_night_whose_new_row_has_the_same_name_ships(self):
+        self.spy_gate()
+        regression, crop = self.name_regression()
+        extra = self.named_extra_result([crop], ["C Three ex"])
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out, contextlib.redirect_stdout(io.StringIO()):
+            _, m = self.go(root, out, regression=regression, new_sets_fn=lambda: extra, live={})
+        self.assertIs(m["improved"], True)
+        self.assertEqual(m["regression"], {"before": 1.0, "after": 1.0, "n": 2})
+
+    # --- holding back the new cards the replay blames ------------------------------------------------------------------
+    def hold_setup(self):
+        """The real gate, counted, plus a status module that records what it is given."""
+        from pipeline import gate
+
+        self.calls = []
+
+        def evaluate(candidate, live, exam, regression, catalog):
+            self.calls.append(candidate)
+            return gate.evaluate(candidate, live, exam, regression, catalog=catalog)
+
+        self.modules = {"gate": types.SimpleNamespace(evaluate=evaluate),
+                        "status": types.SimpleNamespace(write=lambda path, record: self.seen.__setitem__("status", (path, record)))}
+
+    def stub_gate(self, **verdict):
+        """A gate that fails the regression rate and blames sv9-1 (override any key of the verdict)."""
+        self.calls = []
+
+        def evaluate(candidate, live, exam, regression, catalog):
+            self.calls.append(candidate)
+            full = {"improved": False, "regression": {"before": 1.0, "after": 0.5, "n": 2}, "exam": {"before": 0.0, "after": 0.0, "n": 0},
+                    "wrongHigh": {"before": 0.0, "after": 0.0}, "blame": [(0, "sv9-1", "lostRead")],
+                    "confidentWrong": {"regression": {"before": 0, "after": 0}, "exam": {"before": 0, "after": 0}}, **verdict}
+            return {k: v for k, v in full.items() if v is not None}  # a key given as None is left out of the verdict
+
+        self.modules = {"gate": types.SimpleNamespace(evaluate=evaluate),
+                        "status": types.SimpleNamespace(write=lambda path, record: self.seen.__setitem__("status", (path, record)))}
+
+    def night(self, regression, extra, **over):
+        """(summary, manifest, catalog-extra.bin bytes or None, log) of a cards-only night."""
+        log = io.StringIO()
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out, contextlib.redirect_stdout(log):
+            summary, m = self.go(root, out, regression=regression, new_sets_fn=lambda: extra, live=over.pop("live", {}),
+                                 status_path=os.path.join(out, "STATUS.md"), **over)
+            path = os.path.join(out, "catalog-extra.bin")
+            part = read(path) if os.path.exists(path) else None
+        return summary, m, part, log.getvalue()
+
+    @staticmethod
+    def part_ids(part):
+        from pipeline.new_sets import read_extra
+
+        return [c["id"] for c in read_extra(part)[0]]
+
+    @staticmethod
+    def stealer(crop, closeness, k):
+        """A new-card vector at cosine `closeness` to the crop (the shipped c-3 is at about 0.66)."""
+        v = closeness * crop + np.sqrt(1 - closeness**2) * h.unit(100 + k)
+        return (v / np.linalg.norm(v)).astype(np.float32)
+
+    def test_one_blamed_card_is_held_and_the_rest_ship_with_everything_describing_the_reduced_candidate(self):
+        self.hold_setup()
+        regression, crop = self.crop_regression()
+        extra = self.named_extra_result([crop, h.unit(100), h.unit(101)], ["Thief", "Calm One", "Calm Two"], ids=("sv9-1", "sv9-2", "sv9-3"))
+        summary, m, part, log = self.night(regression, extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual(m["regression"], {"before": 1.0, "after": 1.0, "n": 2})
+        self.assertEqual(self.part_ids(part), ["sv9-2", "sv9-3"])
+        self.assertEqual(m["assets"]["catalogExtra"]["sha256"], hashlib.sha256(part).hexdigest())
+        self.assertEqual(m["assets"]["catalogExtra"]["bytes"], len(part))
+        self.assertEqual((summary["newCards"], summary["newSets"]), (2, ["sv9"]))
+        self.assertEqual(summary["held"], [{"id": "sv9-1", "name": "Thief", "set": "sv9", "reason": "confident wrong read and lost a correct read", "rows": 2}])
+        record = self.seen["status"][1]
+        self.assertEqual(record["held"], [{"id": "sv9-1", "name": "Thief", "reason": "confident wrong read and lost a correct read"}])
+        self.assertEqual((record["newSets"], record["shipped"]), (["sv9"], True))
+        self.assertIn("held back sv9-1 (Thief, set sv9): confident wrong read and lost a correct read; blamed by 2 regression rows", log)
+        self.assertIn("held back 1 new cards in 1 rounds; 2 new cards ship", log)
+        self.assertEqual(len(self.calls), 2)
+
+    def test_a_card_that_takes_the_row_once_the_first_is_held_is_held_in_the_next_round(self):
+        self.hold_setup()
+        regression, crop = self.crop_regression()
+        extra = self.named_extra_result([crop, self.stealer(crop, 0.95, 1), h.unit(105)], ["First", "Second", "Calm"], ids=("sv9-1", "sv9-2", "sv9-3"))
+        summary, m, part, log = self.night(regression, extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual(self.part_ids(part), ["sv9-3"])
+        self.assertEqual([h_["id"] for h_ in summary["held"]], ["sv9-1", "sv9-2"])
+        self.assertEqual(summary["newCards"], 1)
+        self.assertIn("held back 2 new cards in 2 rounds; 1 new cards ship", log)
+
+    def test_three_rounds_are_the_most_and_a_fourth_blamed_card_means_nothing_ships(self):
+        self.hold_setup()
+        regression, crop = self.crop_regression()
+        stealers = [crop] + [self.stealer(crop, c, k) for k, c in enumerate((0.95, 0.9), 1)]
+        ok = self.named_extra_result(stealers + [h.unit(110)], ["A", "B", "C", "Calm"], ids=("sv9-1", "sv9-2", "sv9-3", "sv9-4"))
+        summary, m, part, _ = self.night(regression, ok)
+        self.assertIs(m["improved"], True)  # three held cards in three rounds: the last round is allowed
+        stealers.append(self.stealer(crop, 0.85, 3))
+        extra = self.named_extra_result(stealers + [h.unit(110)], ["A", "B", "C", "D", "Calm"], ids=("sv9-1", "sv9-2", "sv9-3", "sv9-4", "sv9-5"))
+        summary, m, part, log = self.night(regression, extra)
+        self.assertIs(m["improved"], False)
+        self.assertEqual(m["regression"], {"before": 1.0, "after": 0.0, "n": 2})
+        self.assertEqual(self.part_ids(part), ["sv9-1", "sv9-2", "sv9-3", "sv9-4", "sv9-5"])  # the unreduced candidate, as before this rule
+        self.assertNotIn("held", summary)
+        self.assertNotIn("held", self.seen["status"][1])
+        self.assertIn("still failing after 3 rounds", log)
+
+    def test_more_than_ten_blamed_cards_means_nothing_ships(self):
+        self.hold_setup()
+        crops = [h.unit(3, noise=0.05, seed=s) for s in range(11)]
+        regression = (np.stack(crops), ["c-3"] * 11)
+        ids = tuple(f"sv9-{k}" for k in range(1, 13))
+        extra = self.named_extra_result(crops + [h.unit(100)], [f"T{k}" for k in range(11)] + ["Calm"], ids=ids)
+        summary, m, part, log = self.night(regression, extra)
+        self.assertIs(m["improved"], False)
+        self.assertEqual(len(self.part_ids(part)), 12)
+        self.assertNotIn("held", summary)
+        self.assertIn("that would hold 11 cards, the limit is 10", log)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_ten_blamed_cards_are_the_most_that_can_be_held(self):
+        self.hold_setup()
+        crops = [h.unit(3, noise=0.05, seed=s) for s in range(10)]
+        regression = (np.stack(crops), ["c-3"] * 10)
+        ids = tuple(f"sv9-{k}" for k in range(1, 12))
+        extra = self.named_extra_result(crops + [h.unit(100)], [f"T{k}" for k in range(10)] + ["Calm"], ids=ids)
+        summary, m, part, _ = self.night(regression, extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual(self.part_ids(part), ["sv9-11"])
+        self.assertEqual(len(summary["held"]), 10)
+
+    def test_a_failing_row_whose_first_hit_is_a_catalog_or_live_row_means_nothing_ships(self):
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        live = self.named_extra_result([h.unit(102)], ["Old"], ids=("sv8-1",))
+        for blamed in ("c-3", "sv8-1"):
+            with self.subTest(first_hit=blamed):
+                self.stub_gate(blame=[(0, "sv9-1", "lostRead"), (1, blamed, "lostRead")])
+                _, m, part, log = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra, live={"catalogExtra": live["bytes"]})
+                self.assertIs(m["improved"], False)
+                self.assertEqual(len(self.calls), 1)
+                self.assertIn("is not one of tonight's new cards", log)
+
+    def stub_gate_then_pass(self, second=None, **first):
+        """A gate that fails the first evaluation as stub_gate does (override keys with `first`) and passes the second (override
+        keys with `second`). A key given as None is left out of that verdict."""
+        self.calls = []
+
+        def evaluate(candidate, live, exam, regression, catalog):
+            self.calls.append(candidate)
+            base = {"improved": False, "exam": {"before": 0.0, "after": 0.0, "n": 0}, "wrongHigh": {"before": 0.0, "after": 0.0}, "blame": [],
+                    "confidentWrong": {"regression": {"before": 0, "after": 0}, "exam": {"before": 0, "after": 0}}}
+            if len(self.calls) == 1:
+                full = {**base, "regression": {"before": 1.0, "after": 0.5, "n": 2}, "blame": [(0, "sv9-1", "confidentWrong")],
+                        "wrongHigh": {"before": 0.0, "after": 0.5}, **first}
+            else:
+                full = {**base, "regression": {"before": 1.0, "after": 1.0, "n": 2}, **(second or {})}
+            return {k: v for k, v in full.items() if v is not None}
+
+        self.modules = {"gate": types.SimpleNamespace(evaluate=evaluate),
+                        "status": types.SimpleNamespace(write=lambda path, record: self.seen.__setitem__("status", (path, record)))}
+
+    def test_a_rise_in_the_exams_own_confident_wrong_reads_holds_nothing_even_when_a_regression_row_is_blamed(self):
+        self.stub_gate_then_pass(confidentWrong={"regression": {"before": 0, "after": 1}, "exam": {"before": 0, "after": 1}})
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, log = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+        self.assertIs(m["improved"], False)
+        self.assertEqual((len(self.calls), self.part_ids(part)), (1, ["sv9-1", "sv9-2"]))
+        self.assertNotIn("held", summary)
+        self.assertIn("the exam itself has more confident wrong reads", log)
+
+    def test_a_verdict_without_the_exams_confident_wrong_count_holds_nothing_and_nothing_ships(self):
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        for label, verdict in (("missing", None), ("malformed", {"regression": {"before": 0, "after": 0}}),
+                               ("not numbers", {"regression": {"before": 0, "after": 0}, "exam": {"before": "0", "after": 0}}),
+                               ("not a dict", [1, 2])):
+            with self.subTest(label):
+                self.stub_gate_then_pass(confidentWrong=verdict)
+                summary, m, part, log = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+                self.assertIs(m["improved"], False)
+                self.assertEqual((len(self.calls), self.part_ids(part)), (1, ["sv9-1", "sv9-2"]))
+                self.assertNotIn("held", summary)
+                self.assertIn("did not report the exam's confident wrong reads", log)
+
+    def test_a_trimmed_candidate_whose_exam_confident_wrong_count_rose_does_not_ship_even_when_the_combined_count_passes(self):
+        # Round 0: the exam count is level and a regression row is blamed on sv9-1. The retest passes the combined count (a
+        # regression row improved) but the exam's own count is above "before".
+        self.stub_gate_then_pass(second={"confidentWrong": {"regression": {"before": 1, "after": 0}, "exam": {"before": 0, "after": 1}}})
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, log = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+        self.assertIs(m["improved"], False)
+        self.assertEqual((len(self.calls), self.part_ids(part)), (2, ["sv9-1", "sv9-2"]))  # the unreduced failed candidate, as any failed hold
+        self.assertNotIn("held", summary)
+        self.assertNotIn("held", self.seen["status"][1])
+        self.assertEqual(m["regression"], {"before": 1.0, "after": 0.5, "n": 2})
+        self.assertIn("the trimmed candidate has more confident wrong reads on the exam than before", log)
+
+    def test_a_trimmed_candidate_with_a_level_exam_count_still_ships(self):
+        self.stub_gate_then_pass(second={"confidentWrong": {"regression": {"before": 1, "after": 0}, "exam": {"before": 1, "after": 1}}})
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, _ = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual(self.part_ids(part), ["sv9-2"])
+
+    def test_with_the_real_gate_a_card_that_makes_the_exam_confidently_wrong_blocks_holding_the_card_a_regression_row_blames(self):
+        self.hold_setup()
+        exam_crop = h.unit(3, noise=0.05, seed=0)
+        row_crop = h.unit(3, noise=0.05, seed=7)  # far from the exam crop (cosine about 0.44), as far from the catalog's c-3 as it is
+        extra = self.named_extra_result([exam_crop, row_crop, h.unit(100)], ["Exam Thief", "Row Thief", "Calm"], ids=("sv9-1", "sv9-2", "sv9-3"))
+
+        class CropEmbedder(FakeEmbedder):
+            def __call__(self, jpeg_bytes):
+                v = super().__call__(jpeg_bytes)
+                return exam_crop if int(np.argmax(v)) == 3 else v
+
+        log = io.StringIO()
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out, contextlib.redirect_stdout(log):
+            h.write_item(root, h.item(install=1, split="exam", photo=h.photo_id(50, "exam"), cards=[card_for(3)]), "e1.json")
+            summary, m = self.go(root, out, embedder=CropEmbedder(), regression=(np.stack([row_crop, row_crop]), ["c-3", "c-3"]),
+                                 new_sets_fn=lambda: extra, live={}, status_path=os.path.join(out, "STATUS.md"))
+            part = read(os.path.join(out, "catalog-extra.bin"))
+        self.assertIs(m["improved"], False)
+        self.assertEqual(m["exam"]["n"], 1)
+        self.assertEqual(len(self.calls), 1)  # no retest: the exam's own count rose
+        self.assertEqual(self.part_ids(part), ["sv9-1", "sv9-2", "sv9-3"])
+        self.assertNotIn("held", summary)
+        self.assertIn("the exam itself has more confident wrong reads", log.getvalue())
+
+    def test_a_rise_only_in_the_regression_sets_confident_wrong_reads_is_held_as_before(self):
+        self.stub_gate_then_pass(confidentWrong={"regression": {"before": 0, "after": 1}, "exam": {"before": 0, "after": 0}})
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, _ = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual((len(self.calls), self.part_ids(part)), (2, ["sv9-2"]))
+        self.assertEqual([c["id"] for c in summary["held"]], ["sv9-1"])
+
+    def test_a_failure_with_no_new_card_left_after_holding_means_nothing_ships(self):
+        self.stub_gate()
+        extra = self.named_extra_result([h.unit(100)], ["Only"], ids=("sv9-1",))
+        _, m, part, log = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+        self.assertIs(m["improved"], False)
+        self.assertEqual(len(self.calls), 1)
+        self.assertIn("no new card would be left", log)
+
+    def test_a_rate_drop_from_a_different_name_steal_holds_the_stealing_card_and_the_night_ships(self):
+        self.hold_setup()
+        regression, crop = self.name_regression()
+        extra = self.named_extra_result([crop, h.unit(100)], ["Somebody Else", "Calm"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, _ = self.night(regression, extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual(m["regression"], {"before": 1.0, "after": 1.0, "n": 2})
+        self.assertEqual(self.part_ids(part), ["sv9-2"])
+        self.assertEqual([h_["id"] for h_ in summary["held"]], ["sv9-1"])
+
+    def test_a_same_name_new_card_is_not_blamed(self):
+        self.hold_setup()
+        regression, crop = self.name_regression()
+        extra = self.named_extra_result([crop, h.unit(100)], ["C Three ex", "Calm"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, _ = self.night(regression, extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual(self.part_ids(part), ["sv9-1", "sv9-2"])
+        self.assertNotIn("held", summary)
+
+    def test_a_failing_exam_holds_nothing(self):
+        self.stub_gate(exam={"before": 0.8, "after": 0.5, "n": 30})
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, _ = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+        self.assertIs(m["improved"], False)
+        self.assertEqual((len(self.calls), self.part_ids(part)), (1, ["sv9-1", "sv9-2"]))
+        self.assertNotIn("held", summary)
+
+    def test_a_night_that_changes_a_learned_part_never_holds(self):
+        self.stub_gate()
+        self.modules["train_adapter"] = types.SimpleNamespace(train=lambda pairs, cat: b"ADAPTER")
+        extra = self.named_extra_result([h.unit(100), h.unit(101)], ["A", "B"], ids=("sv9-1", "sv9-2"))
+        summary, m, part, _ = self.night((np.stack([h.unit(3), h.unit(3)]), ["c-3", "c-3"]), extra)
+        self.assertIs(m["improved"], False)
+        self.assertEqual((len(self.calls), self.part_ids(part)), (1, ["sv9-1", "sv9-2"]))
+        self.assertNotIn("held", summary)
+
+    def test_a_cards_only_night_that_passes_first_time_holds_nothing_and_writes_what_it_always_did(self):
+        self.hold_setup()
+        regression, _ = self.crop_regression()
+        extra = self.extra_result([h.unit(100)])
+        summary, m, part, log = self.night(regression, extra)
+        self.assertIs(m["improved"], True)
+        self.assertEqual(part, extra["bytes"])  # not rebuilt
+        self.assertEqual(len(self.calls), 1)
+        self.assertNotIn("held", summary)
+        self.assertEqual(sorted(self.seen["status"][1]), ["contributors", "date", "exam", "newSets", "promoted", "regression", "seq", "shipped"])
+        self.assertNotIn("held back", log)
+        self.assertEqual(sorted(m["assets"]), ["catalogExtra", "memory"])
+        self.assertEqual(m["assets"]["catalogExtra"]["sha256"], hashlib.sha256(extra["bytes"]).hexdigest())
+
     def test_the_live_bundles_rows_are_in_the_before_replay(self):
         self.spy_gate()
         regression, crop = self.crop_regression()
@@ -537,6 +868,199 @@ class Parts(unittest.TestCase):
         with unittest.mock.patch("importlib.import_module", side_effect=ModuleNotFoundError("numpy", name="numpy")):
             with self.assertRaises(ModuleNotFoundError):
                 optional_modules()
+
+    def test_the_issue_time_is_read_when_the_manifest_is_made_not_when_the_run_starts(self):
+        late = datetime.datetime(2026, 10, 15, 5, 40, 9, tzinfo=UTC)
+        calls = []
+        inner = self.modules["gate"].evaluate
+
+        def evaluate(*args, **kwargs):
+            self.seen["gate_done"] = True
+            return inner(*args, **kwargs)
+
+        self.modules["gate"] = types.SimpleNamespace(evaluate=evaluate)
+
+        def clock():
+            calls.append(self.seen.get("gate_done", False))
+            return late
+
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
+            self.build(root)
+            args = {**COMMON, "clock": clock}
+            run_pipeline(data_dir=root, out_dir=out, pins=PINS, embedder=FakeEmbedder(), modules=self.modules, catalog=catalog(),
+                         status_path=os.path.join(out, "STATUS.md"), **args)
+            manifest = json.loads(read(os.path.join(out, "manifest.json")))
+        self.assertTrue(calls and all(calls), calls)  # every read of the clock came after the slow stages
+        self.assertEqual(manifest["issuedAt"], "2026-10-15T05:40:09Z")
+        self.assertEqual(self.seen["status"][1]["date"], "2026-10-15")
+
+    def test_the_status_date_is_the_day_of_the_issue_time(self):
+        after_midnight = datetime.datetime(2026, 10, 16, 0, 5, 0, tzinfo=UTC)
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
+            self.build(root)
+            self.go(root, out, clock=lambda: after_midnight, status_path=os.path.join(out, "STATUS.md"))
+            manifest = json.loads(read(os.path.join(out, "manifest.json")))
+        self.assertEqual(manifest["issuedAt"], "2026-10-16T00:05:00Z")
+        self.assertEqual(self.seen["status"][1]["date"], "2026-10-16")
+
+    def test_a_non_utc_clock_is_written_as_utc(self):
+        plus_two = datetime.timezone(datetime.timedelta(hours=2))
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
+            self.build(root)
+            self.go(root, out, clock=lambda: datetime.datetime(2026, 10, 15, 5, 0, 0, tzinfo=plus_two))
+            self.assertEqual(json.loads(read(os.path.join(out, "manifest.json")))["issuedAt"], "2026-10-15T03:00:00Z")
+
+
+LIVE_PINS_CLIP = COMMON["clip_hash"]
+
+
+class Reissue(unittest.TestCase):
+    """A night that does not ship publishes the live bundle again, with a new seq and issue time, once it is old enough."""
+
+    LIVE_PARTS = {"memory": b"LIVE-MEMORY", "check": b"LIVE-CHECK"}
+
+    def setUp(self):
+        self.seen = {}
+
+        def evaluate(candidate, live, exam, regression, catalog):
+            return {"improved": self.seen.get("improved", False), "regression": {"before": 0.5, "after": 0.5, "n": 2},
+                    "exam": {"before": 0.4, "after": 0.4, "n": 1}, "wrongHigh": {"before": 0.1, "after": 0.1}}
+
+        self.modules = dict(
+            train_adapter=types.SimpleNamespace(train=lambda pairs, cat: b"TONIGHT-ADAPTER"),
+            gate=types.SimpleNamespace(evaluate=evaluate),
+        )
+
+    def live_manifest(self, age_days=20, **over):
+        issued = (NIGHT - datetime.timedelta(days=age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        m = build_manifest(
+            PINS, LIVE_PINS_CLIP, self.LIVE_PARTS, "https://example.com/old/",
+            {"before": 0.4, "after": 0.5, "n": 40, "wrongAtHigh": {"before": 0.1, "after": 0.1}},
+            {"before": 0.5, "after": 0.6, "n": 2}, True, 5, issued,
+        )
+        m.update(over)
+        return m
+
+    def go(self, out, live_manifest, live=None, **over):
+        with tempfile.TemporaryDirectory() as root:
+            Run().build(root)
+            args = dict(data_dir=root, out_dir=out, pins=PINS, embedder=FakeEmbedder(), modules=self.modules, catalog=catalog(),
+                        regression=(np.stack([h.unit(3), h.unit(4)]), ["c-3", "c-4"]), live=dict(self.LIVE_PARTS) if live is None else live,
+                        live_manifest=live_manifest, **COMMON)
+            args.update(over)
+            summary = run_pipeline(**args)
+        return summary, json.loads(read(os.path.join(out, "manifest.json")))
+
+    def test_the_limit_is_a_named_constant_of_14_days(self):
+        from pipeline.run import REISSUE_AFTER_DAYS
+
+        self.assertEqual(REISSUE_AFTER_DAYS, 14)
+
+    def test_a_quiet_night_republishes_the_live_parts_byte_for_byte_with_a_new_seq_and_time(self):
+        live = self.live_manifest()
+        with tempfile.TemporaryDirectory() as out:
+            summary, m = self.go(out, live)
+            self.assertIs(summary["reissue"], True)
+            self.assertIs(summary["improved"], False)  # tonight's own verdict; no new bundle shipped
+            self.assertEqual({k: v for k, v in m.items() if k not in ("seq", "issuedAt")}, {k: v for k, v in live.items() if k not in ("seq", "issuedAt")})
+            self.assertEqual((m["seq"], m["issuedAt"]), (9, "2026-10-15T03:17:00Z"))
+            self.assertEqual(read(os.path.join(out, "community-pack.bin")), b"LIVE-MEMORY")
+            self.assertEqual(read(os.path.join(out, "check.bin")), b"LIVE-CHECK")
+            self.assertEqual(sorted(f for f in os.listdir(out) if f.endswith(".bin")), ["check.bin", "community-pack.bin"])  # not tonight's adapter
+
+    def test_a_live_bundle_inside_the_limit_is_left_alone(self):
+        for age in (1, 13, 14):  # "older than 14 days" is strict
+            with tempfile.TemporaryDirectory() as out:
+                summary, m = self.go(out, self.live_manifest(age_days=age))
+                self.assertIs(summary["reissue"], False, age)
+                self.assertEqual(m["assets"]["adapter"]["sha256"], hashlib.sha256(b"TONIGHT-ADAPTER").hexdigest(), age)
+        with tempfile.TemporaryDirectory() as out:
+            just_over = self.live_manifest(age_days=14)
+            just_over["issuedAt"] = (NIGHT - datetime.timedelta(days=14, seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            self.assertIs(self.go(out, just_over)[0]["reissue"], True)
+
+    def test_a_night_that_ships_does_not_reissue(self):
+        self.seen["improved"] = True
+        with tempfile.TemporaryDirectory() as out:
+            summary, m = self.go(out, self.live_manifest(age_days=40))
+            self.assertIs(summary["reissue"], False)
+            self.assertIs(m["improved"], True)
+            self.assertIn("adapter", m["assets"])
+
+    def test_no_live_manifest_or_one_for_another_model_or_crop_is_not_reissued(self):
+        for name, live in {
+            "none": None,
+            "other model": self.live_manifest(model="0123456789abcdef"),
+            "other crop": self.live_manifest(crop=PINS["cropVersion"] + 1),
+        }.items():
+            with tempfile.TemporaryDirectory() as out:
+                self.assertIs(self.go(out, live)[0]["reissue"], False, name)
+
+    def test_a_live_bundle_whose_files_do_not_match_its_manifest_is_not_reissued(self):
+        live = self.live_manifest()
+        for name, parts in {
+            "missing file": {"memory": b"LIVE-MEMORY"},
+            "changed file": {**self.LIVE_PARTS, "check": b"CHANGED"},
+        }.items():
+            with tempfile.TemporaryDirectory() as out:
+                self.assertIs(self.go(out, live, live=parts)[0]["reissue"], False, name)
+
+    def test_a_live_manifest_that_is_not_improved_is_not_reissued(self):
+        with tempfile.TemporaryDirectory() as out:
+            self.assertIs(self.go(out, self.live_manifest(improved=False))[0]["reissue"], False)
+
+    def test_a_live_manifest_whose_numbers_the_signer_would_not_back_is_not_reissued(self):
+        """The signer re-checks `improved: true` against the numbers (scripts/sign_release.py); the build asks the same rule."""
+        exam = {"before": 0.4, "after": 0.5, "n": 40, "wrongAtHigh": {"before": 0.1, "after": 0.1}}
+        for name, over in {
+            "no regression set": dict(regression=None),
+            "empty regression set": dict(regression={"before": 0.0, "after": 0.0, "n": 0}),
+            "regression dropped": dict(regression={"before": 0.6, "after": 0.5, "n": 2}),
+            "exam dropped with 30 cases": dict(exam={**exam, "after": 0.3}),
+            "wrong highs rose": dict(exam={**exam, "wrongAtHigh": {"before": 0.1, "after": 0.2}}),
+        }.items():
+            with tempfile.TemporaryDirectory() as out:
+                self.assertIs(self.go(out, self.live_manifest(**over))[0]["reissue"], False, name)
+        with tempfile.TemporaryDirectory() as out:  # the same bundle with numbers that do hold up is re-issued
+            self.assertIs(self.go(out, self.live_manifest())[0]["reissue"], True)
+
+    def test_a_night_whose_signer_rule_cannot_be_loaded_does_not_reissue_and_does_not_crash(self):
+        with unittest.mock.patch("pipeline.run._signer_improved_rule", return_value=None):
+            with tempfile.TemporaryDirectory() as out, contextlib.redirect_stdout(io.StringIO()) as printed:
+                self.assertIs(self.go(out, self.live_manifest(age_days=40))[0]["reissue"], False)
+        # The missing rule is answered on its own, not by the broad "live manifest could not be read" handler catching a TypeError.
+        self.assertNotIn("could not be read", printed.getvalue())
+
+    def test_a_signer_file_that_fails_to_load_for_any_reason_means_no_rule_not_a_crash(self):
+        from pipeline.run import _signer_improved_rule
+
+        for name, source in {"syntax error": "def broken(:\n", "raises on import": "raise RuntimeError('boom')\n", "no rule": "X = 1\n"}.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as folder:
+                path = os.path.join(folder, "sign_release.py")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(source)
+                with contextlib.redirect_stdout(io.StringIO()) as printed:
+                    self.assertIsNone(_signer_improved_rule(path))
+                self.assertIn("not re-issuing", printed.getvalue())
+        self.assertTrue(callable(_signer_improved_rule()))  # the real signer still loads
+
+    def test_load_live_manifest_reads_ours_and_ignores_the_rest(self):
+        from pipeline.run import load_live_manifest
+
+        live = self.live_manifest()
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertIsNone(load_live_manifest(folder, LIVE_PINS_CLIP, PINS["cropVersion"]))  # no manifest.json
+            with open(os.path.join(folder, "manifest.json"), "wb") as f:
+                f.write(manifest_bytes(live))
+            self.assertEqual(load_live_manifest(folder, LIVE_PINS_CLIP, PINS["cropVersion"]), live)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertIsNone(load_live_manifest(folder, "0123456789abcdef", PINS["cropVersion"]))
+                self.assertIsNone(load_live_manifest(folder, LIVE_PINS_CLIP, 99))
+                self.assertIsNone(load_live_manifest(None, LIVE_PINS_CLIP, PINS["cropVersion"]))
+            with open(os.path.join(folder, "manifest.json"), "wb") as f:
+                f.write(b"not json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertIsNone(load_live_manifest(folder, LIVE_PINS_CLIP, PINS["cropVersion"]))
 
 
 class ExtraIds(unittest.TestCase):
