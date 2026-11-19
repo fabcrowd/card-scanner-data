@@ -4,24 +4,41 @@ Only contributions with split "exam" count, and only when every card in them was
 Cards answered "not a card" have no card id to score and are skipped without disqualifying the contribution.
 Exam samples never enter promote(), which refuses non-teach samples, so exam crops cannot reach the pack.
 """
+import math
+
 import numpy as np
 
 from .contributions import build_samples
+from .manifest import MIN_EXAM_CASES  # gate.py imports this module, so it cannot be read from there
 
 TOP_K = 20
+# The exam rule applies once MIN_EXAM_CASES cases exist; capping each install keeps one install from filling it alone.
+EXAM_MIN_INSTALLS = 4
+MAX_EXAM_CASES_PER_INSTALL = math.ceil(MIN_EXAM_CASES / EXAM_MIN_INSTALLS)
 
 
 def exam_cases(items, valid_ids):
-    """[(Sample, truth card id)] for scoring."""
+    """[(Sample, truth card id)] for scoring, at most MAX_EXAM_CASES_PER_INSTALL per install.
+
+    Cases are taken in key order (photo id, box), so the same inbox always gives the same exam. A kept case counts
+    against every install that voted on it, and a case is skipped only when all of its voters are already at the cap
+    (so an install that co-votes on every case cannot push honest cases out of the exam, and a case always has an
+    install with room, which keeps the total under cap x installs)."""
     answered = [
         it for it in items
         if it["split"] == "exam" and not any("unknown" in c["answer"] for c in it["cards"])
     ]
     cases = []
-    for s in build_samples(answered, valid_ids=valid_ids, split="exam"):
+    taken = {}
+    for s in sorted(build_samples(answered, valid_ids=valid_ids, split="exam"), key=lambda sample: sample.key):
         votes = [v for v in s.votes.values() if v.kind != "unknown"]
         ids = {v.card_id for v in votes if v.kind == "card"}
         if len(ids) == 1 and all(v.kind == "card" for v in votes):
+            installs = {v.install for v in votes}
+            if all(taken.get(i, 0) >= MAX_EXAM_CASES_PER_INSTALL for i in installs):
+                continue
+            for i in installs:
+                taken[i] = taken.get(i, 0) + 1
             cases.append((s, next(iter(ids))))
     return cases
 

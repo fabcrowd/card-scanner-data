@@ -10,6 +10,8 @@ name: nightly-pack
 #          artifact (every part's sha256, size and format, run number, time), signs manifest.json and publishes the
 #          release. A bundle the gate did not approve is published as a pre-release, so the "latest" release
 #          is always the live bundle. STATUS.md and status.json go to the rolling `status` pre-release.
+#          A quiet night with a live bundle older than REISSUE_AFTER_DAYS (pipeline/run.py) publishes that bundle again
+#          (new seq and issuedAt); the sign job then downloads the live release itself and refuses anything else.
 #
 # Optional, only when this repo is private and packs go to a separate public repo:
 #   variable PACK_RELEASE_REPO (owner/name) and secret PACK_RELEASE_TOKEN (contents: write on that repo only).
@@ -33,6 +35,7 @@ jobs:
     timeout-minutes: 90
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
+      reissue: ${{ steps.meta.outputs.reissue }}
     env:
       RELEASE_REPO: ${{ vars.PACK_RELEASE_REPO || github.repository }}
     steps:
@@ -78,14 +81,43 @@ jobs:
       - name: Fetch model and catalog (sha256 pinned in pins.json)
         run: python scripts/fetch_assets.py --pins pins.json --out assets
 
+      # Not part of the learning bundle: a failed price fetch must not stop the pack, and the file is published
+      # on its own pre-release so "latest" stays the live bundle. It does not depend on the pack build, so it runs first:
+      # the manifest's issue time is stamped inside the pack build, and the sign job refuses a manifest more than an
+      # hour old, so nothing slow may sit between that stamp and the artifact upload.
+      - name: Build the daily price snapshot
+        id: prices
+        continue-on-error: true
+        timeout-minutes: 15
+        run: python -m pipeline.prices --out out/prices.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.prices.outcome == 'success'
+        with:
+          name: prices
+          path: out/prices.json
+          if-no-files-found: error
+          retention-days: 7
+
       # The latest (non-pre-)release is the live bundle; the rolling `status` release keeps STATUS history.
       - name: Fetch the live bundle and status history
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p live live-status
-          gh release download --repo "${RELEASE_REPO}" --pattern '*' --dir live || echo "no live bundle yet"
-          gh release download status --repo "${RELEASE_REPO}" --pattern status.json --dir live-status || echo "no status history yet"
+          err=$(mktemp)
+          # Only "the release does not exist yet" is forgiven. Any other failure (token, network, rate limit,
+          # a missing asset) stops the night instead of looking like a first run.
+          if ! gh release download --repo "${RELEASE_REPO}" --pattern '*' --dir live 2> "${err}"; then
+            grep -qi "release not found" "${err}" || { cat "${err}" >&2; exit 1; }
+            echo "no live bundle yet"
+          fi
+          # The status download also forgives a status release that has no status.json yet (the release was created and
+          # the first upload failed), or no night could ever upload the file again.
+          if ! gh release download status --repo "${RELEASE_REPO}" --pattern status.json --dir live-status 2> "${err}"; then
+            grep -qiE "release not found|no assets match the file pattern" "${err}" || { cat "${err}" >&2; exit 1; }
+            echo "no status history yet"
+          fi
 
       - name: Build bundle
         id: meta
@@ -97,21 +129,17 @@ jobs:
             --regression regression.npz --seq "${GITHUB_RUN_NUMBER}" \
             --live-dir live --status-history live-status/status.json --seed seed.npz \
             --base-url "https://github.com/${RELEASE_REPO}/releases/download/${tag}/"
+          # true when tonight ships nothing and the live bundle is old enough that out/ holds it again (see pipeline/run.py)
+          reissue=$(python -c "import json; print(str(json.load(open('out/summary.json'))['reissue']).lower())")
+          echo "reissue=${reissue}" >> "$GITHUB_OUTPUT"
 
-      # Not part of the learning bundle: a failed price fetch must not stop the pack, and the file is published
-      # on its own pre-release so "latest" stays the live bundle.
-      - name: Build the daily price snapshot
-        id: prices
-        continue-on-error: true
-        run: python -m pipeline.prices --out out/prices.json
-
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: steps.prices.outcome == 'success'
-        with:
-          name: prices
-          path: out/prices.json
-          if-no-files-found: error
-          retention-days: 7
+      # A night that held new cards back still ships, so say it where the run page shows it. Never fails the job.
+      - name: Warn about held new cards
+        run: |
+          held=$(python -c "import json; print(len(json.load(open('out/summary.json')).get('held') or []))" 2>/dev/null || echo 0)
+          if [ "${held}" -gt 0 ] 2>/dev/null; then
+            echo "::warning::${held} new cards were held back tonight because the fixed regression photos blame them; their ids are in STATUS.md"
+          fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -138,15 +166,18 @@ jobs:
     env:
       RELEASE_REPO: ${{ vars.PACK_RELEASE_REPO || github.repository }}
       TAG: ${{ needs.build.outputs.tag }}
+      REISSUE: ${{ needs.build.outputs.reissue }}
       GH_TOKEN: ${{ secrets.PACK_RELEASE_TOKEN || github.token }}
     steps:
-      # Only the signer and its pinned requirements, from the default branch.
+      # Only the signer, its pinned requirements and the host list it shares with the build (constants only), from the default branch.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
           persist-credentials: false
           sparse-checkout: |
             scripts/sign_release.py
+            pipeline/__init__.py
+            pipeline/image_hosts.py
             requirements-sign.txt
           sparse-checkout-cone-mode: false
 
@@ -161,15 +192,40 @@ jobs:
           name: pack
           path: out
 
+      # A re-issue (the build job says a quiet night republishes the live bundle) is checked against the release that is
+      # live NOW, downloaded here by this job. It is never taken from the build job's artifact, so an older signed
+      # manifest cannot be passed off as the live one. No fallback: a failed download stops the night.
+      - name: Fetch the live release for a re-issue
+        if: env.REISSUE == 'true'
+        run: gh release download --repo "${RELEASE_REPO}" --pattern '*' --dir live-src
+
+      # The signer exits 3 when it refuses. On a normal night that fails the job. A refused re-issue only warns and signs
+      # nothing (steps.sign.outputs.signed=false): the night shipped nothing, and status and prices still go out.
+      # Any other failure (no key, a crash) fails the job in both modes.
       - name: Verify and sign
+        id: sign
         env:
           PACK_SIGNING_KEY: ${{ secrets.PACK_SIGNING_KEY }}
         run: |
+          err=$(mktemp)
+          reissue=""
+          if [ "${REISSUE}" = "true" ]; then reissue="--reissue-live-dir live-src"; fi
+          code=0
           python scripts/sign_release.py --dir out --run-number "${GITHUB_RUN_NUMBER}" \
-            --base-url "https://github.com/${RELEASE_REPO}/releases/download/${TAG}/"
+            --base-url "https://github.com/${RELEASE_REPO}/releases/download/${TAG}/" ${reissue} 2> "${err}" || code=$?
+          cat "${err}" >&2
+          if [ "${code}" -eq 0 ]; then
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          elif [ "${code}" -eq 3 ] && [ -n "${reissue}" ]; then
+            echo "::warning title=Re-issue of the live bundle refused::$(tr '\n\r' '  ' < "${err}")"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          else
+            exit "${code}"
+          fi
 
       # Only the parts the verified manifest lists are published.
       - name: Publish release
+        if: steps.sign.outputs.signed == 'true'
         run: |
           files=$(python -c "import json,os; m=json.load(open('out/manifest.json')); print(*['out/'+os.path.basename(a['url']) for a in m['assets'].values()])")
           improved=$(python -c "import json; print(str(json.load(open('out/manifest.json'))['improved']).lower())")

@@ -58,6 +58,25 @@ class Status(unittest.TestCase):
             status.write(p, rec(1, newSets=["a|b"]))
             self.assertIn("a\\|b", read(p))
 
+    def test_held_cards_are_kept_in_the_history_and_listed_under_the_table_for_the_latest_night_only(self):
+        held = [{"id": "sv9-1", "name": "Thief", "reason": "lost a correct read"}]
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "STATUS.md")
+            status.write(p, rec(7, held=held))
+            self.assertEqual(load(os.path.join(d, "status.json"))[0]["held"], held)
+            self.assertEqual(rows(p), ["| 2026-10-16 | 7 | 3 | 12 | sv9 | 0.5 -> 0.6 | 0.4 -> 0.45 (n=40) | yes |"])  # the table is unchanged
+            self.assertIn("- sv9-1 (Thief): lost a correct read", read(p))
+            status.write(p, rec(8))
+            self.assertNotIn("sv9-1", read(p))
+            self.assertEqual(load(os.path.join(d, "status.json"))[0]["held"], held)  # the history keeps it
+
+    def test_a_run_without_held_cards_writes_the_same_file_as_before(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "STATUS.md")
+            status.write(p, rec(7))
+            self.assertNotIn("Held back", read(p))
+            self.assertNotIn("held", load(os.path.join(d, "status.json"))[0])
+
     def test_corrupt_history_starts_fresh(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "STATUS.md")

@@ -43,5 +43,9 @@ def write(path, run_record):
     lines = ["# Learning status", "", f"Last {KEEP} nightly runs, newest first. Scores are top-1 on the fixed regression set and the community exam.", "",
              "| " + " | ".join(COLUMNS) + " |", "|" + "---|" * len(COLUMNS)]
     lines += [_row(r) for r in reversed(history)]
+    held = history[-1].get("held")
+    if isinstance(held, list) and held:  # new cards the latest night held back (tried again tomorrow); status.json carries the same list
+        lines += ["", f"Held back on {history[-1]['date']} (seq {history[-1]['seq']}), tried again tomorrow:", ""]
+        lines += [f"- {_cell(h.get('id'))} ({_cell(h.get('name'))}): {_cell(h.get('reason'))}" for h in held if isinstance(h, dict)]
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")

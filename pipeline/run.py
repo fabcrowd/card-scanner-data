@@ -13,6 +13,7 @@ import argparse
 import datetime
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -26,14 +27,22 @@ from .contributions import build_samples, count_box_signals, load_contributions,
 from .embed import ClipEmbedder
 from .exam import TOP_K, exam_cases, score_exam
 from .manifest import ASSET_FILES, MIN_EXAM_CASES, build_manifest, is_improved, manifest_bytes
-from .new_sets import read_extra
+from .new_sets import extra_tag, read_extra, write_extra
 from .pack import read_pack, write_pack
 from .regression import load_regression
 
 OPTIONAL_MODULES = ("train_adapter", "train_check", "gate", "status")
+# A night that ships nothing republishes the live bundle once its manifest is older than this. The extension drops a
+# manifest older than 30 days (MAX_MANIFEST_AGE_MS in tools/extension-wasm/lib/bundle.js; tests/test_drift.py keeps the margin).
+REISSUE_AFTER_DAYS = 14
 # The learned parts a night can change; catalogExtra is separate because it adds cards, not learning.
 LEARNED = ("memory", "adapter")
 MIN_NOT_A_CARD_INSTALLS = 2
+# The holding rule for a night that only adds cards (see _plan_hold): at most this many hold-and-retest rounds, and at
+# most this many held cards in total.
+HOLD_MAX_ROUNDS = 3
+HOLD_MAX_CARDS = 10
+HOLD_REASONS = {"confidentWrong": "confident wrong read", "lostRead": "lost a correct read"}
 
 
 def optional_modules():
@@ -76,21 +85,86 @@ def _scores(block):
     return {k: block[k] for k in ("before", "after", "n")}
 
 
-def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url, seq, issued_at, regression=None,
-                 modules=None, live=None, seed_pairs=None, new_sets_fn=None, status_path=None, status_history=None):
+def _issue_stamp(clock):
+    """The manifest's issuedAt: the clock's time in UTC, as YYYY-MM-DDTHH:MM:SSZ. Read when the manifest is made."""
+    now = clock() if clock else datetime.datetime.now(datetime.timezone.utc)
+    return now.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _signer_improved_rule(path=None):
+    """The signer's own check that `improved: true` follows from the numbers, loaded from scripts/sign_release.py so the
+    build proposes only what the signer can accept (one copy of the rule). None when the file cannot be loaded, for any
+    reason: a broken signer file must mean "do not re-issue", not a failed night. `path` is for tests."""
+    path = path or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "sign_release.py")
+    try:
+        spec = importlib.util.spec_from_file_location("sign_release_rule", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module._improved_is_supported
+    except Exception as err:  # noqa: BLE001 - executing the file can raise anything (SyntaxError included)
+        print(f"the signer's rule could not be loaded ({type(err).__name__}: {err}): not re-issuing")
+        return None
+
+
+def _reissue_parts(live_manifest, live, pins, clip_hash, issued_at):
+    """The live bundle's parts {name: bytes} when tonight should publish it again, else None.
+
+    That needs a live manifest that is improved (and whose numbers the signer's rule backs, or the signer would
+    refuse the re-issue), made for this recognizer model and crop, older than REISSUE_AFTER_DAYS, and whose listed
+    parts are all in `live` byte for byte (sha256 and size as the manifest says)."""
+    if not isinstance(live_manifest, dict) or live_manifest.get("improved") is not True:
+        return None
+    if live_manifest.get("model") != clip_hash or live_manifest.get("crop") != pins["cropVersion"]:
+        return None
+    try:
+        made = datetime.datetime.strptime(live_manifest["issuedAt"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        assets = live_manifest["assets"]
+        now = datetime.datetime.strptime(issued_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+        if now - made <= datetime.timedelta(days=REISSUE_AFTER_DAYS) or not assets:
+            return None
+        rule = _signer_improved_rule()
+        if rule is None:
+            return None
+        if not rule(live_manifest["exam"], live_manifest["regression"]):
+            print("live bundle is due for a re-issue, but its numbers do not back improved under the signer's rule: not re-issuing")
+            return None
+        parts = {}
+        for name, asset in assets.items():
+            data = live.get(name)
+            if data is None or hashlib.sha256(data).hexdigest() != asset["sha256"] or len(data) != asset["bytes"]:
+                print(f"live bundle is due for a re-issue, but its {name} file does not match its manifest: not re-issuing")
+                return None
+            parts[name] = data
+    except (KeyError, TypeError, ValueError):
+        print("live manifest could not be read for a re-issue: not re-issuing")
+        return None
+    return parts
+
+
+def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url, seq, clock=None, regression=None,
+                 modules=None, live=None, seed_pairs=None, new_sets_fn=None, status_path=None, status_history=None, live_manifest=None,
+                 _hold=None):
     """Runs every stage and writes the parts and the unsigned manifest. Returns a summary dict.
 
+    clock: () -> aware datetime; read once, right before the manifest is made (after the long stages), for issuedAt.
+        Default: now in UTC.
     regression: (embeddings, card ids) of the fixed server-owned set, or None. Without it the manifest can never
         say improved.
     modules: {name: module} of the optional pipeline modules (default: those that exist).
     live: {"memory": bytes, "adapter": bytes} of the live bundle, which the gate compares against. Missing means
         the plain catalog.
+    live_manifest: the live bundle's parsed manifest (load_live_manifest), or None. When the night ships nothing and
+        the live manifest is older than REISSUE_AFTER_DAYS, the output is the live bundle again: the same part files and
+        a manifest equal to the live one except seq and issuedAt (the sign job re-checks this against the release).
     seed_pairs: [(embedding, card id)] from seed.npz (scripts/build_seed.py), or None for no seed.
     new_sets_fn: () -> new_sets.build result, or None to add no cards.
     status_path / status_history: where STATUS.md is written, and the earlier status.json to carry forward.
+    _hold: internal, set only when this call retests a candidate with some new cards held back ({"round", "held", "probe"});
+        such a call writes nothing and returns None unless the reduced candidate ships.
     """
     modules = optional_modules() if modules is None else modules
     live = live or {}
+    hold = _hold or {"round": 0, "held": [], "probe": False}
     items, dropped = load_contributions(data_dir)
     box_signals = count_box_signals(items)
     items = without_box_signals(items)
@@ -162,6 +236,19 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
                 # the signer (scripts/sign_release.py _improved_is_supported) refuses an exam drop once the exam has enough cases
                 and not (exam["n"] >= MIN_EXAM_CASES and exam["after"] < exam["before"])
             )
+            blamed = _plan_hold(verdict, regression_result, exam, new_cards, hold) if same and not improved else None
+            if blamed:
+                held_now = _held_records(new_cards, blamed)
+                final = run_pipeline(
+                    data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url, seq, clock=clock, regression=regression,
+                    modules=modules, live=live, seed_pairs=seed_pairs, new_sets_fn=lambda: _reduced_new_cards(new_cards, {h["id"] for h in held_now}),
+                    status_path=status_path, status_history=status_history, live_manifest=live_manifest,
+                    _hold={"round": hold["round"] + 1, "held": hold["held"] + held_now, "probe": True},
+                )
+                if final is not None:
+                    return final
+                if not hold["probe"]:
+                    print("holding back the blamed new cards did not make the night pass: nothing is held and nothing ships")
     else:
         exam = score_exam(
             exam_emb, exam_truths, catalog, pack.card_ids, pack.dequantized(),
@@ -180,12 +267,33 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
 
     if improved and _shrinks(live.get("catalogExtra"), parts.get("catalogExtra"), new_cards):  # dropped rows are accounted for inside
         improved = False
+    if hold["probe"] and improved:
+        # A candidate trimmed by holding must also keep the exam's own confident-wrong count at or below "before": the combined
+        # count can pass because a regression row got better while the exam got worse.
+        exam_wrong = _exam_confident_wrong(verdict)
+        if exam_wrong is None or exam_wrong[1] > exam_wrong[0]:
+            print("the trimmed candidate has more confident wrong reads on the exam than before: nothing ships")
+            improved = False
+    if hold["probe"] and not improved:
+        return None  # a retest that does not ship leaves no trace: the night is reported as the unreduced candidate
+    if hold["held"]:
+        for h in hold["held"]:
+            print(f"held back {h['id']} ({h['name']}, set {h['set']}): {h['reason']}; blamed by {h['rows']} regression rows")
+        print(f"held back {len(hold['held'])} new cards in {hold['round']} rounds; {len(new_cards['added'])} new cards ship; held cards are tried again tomorrow")
 
+    issued_at = _issue_stamp(clock)
     manifest = build_manifest(pins, clip_hash, parts, base_url, exam, regression_result, improved, seq, issued_at)
+    reissued = None if manifest["improved"] else _reissue_parts(live_manifest, live, pins, clip_hash, issued_at)
+    if reissued is not None:
+        print(f"nothing ships tonight and the live bundle is older than {REISSUE_AFTER_DAYS} days: publishing it again as seq {seq}")
+        manifest = {**live_manifest, "seq": seq, "issuedAt": issued_at}
+        out_parts = reissued
+    else:
+        out_parts = parts
     raw = manifest_bytes(manifest)
 
     os.makedirs(out_dir, exist_ok=True)
-    for name, data in parts.items():
+    for name, data in out_parts.items():
         with open(os.path.join(out_dir, ASSET_FILES[name]), "wb") as f:
             f.write(data)
     with open(os.path.join(out_dir, "manifest.json"), "wb") as f:
@@ -193,8 +301,9 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
 
     summary = {
         "entries": len(pack.card_ids),
-        "parts": sorted(parts),
-        "improved": manifest["improved"],
+        "parts": sorted(out_parts),
+        "improved": bool(improved),
+        "reissue": reissued is not None,
         "exam": exam,
         "regression": regression_result,
         "outcomes": outcomes,
@@ -205,6 +314,8 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
         "embedFailed": teach_failed + exam_failed,
         **promotion.stats,
     }
+    if hold["held"]:
+        summary["held"] = [{k: h[k] for k in ("id", "name", "set", "reason", "rows")} for h in hold["held"]]
     if "status" in modules and status_path:
         if status_history and os.path.exists(status_history):
             shutil.copyfile(status_history, os.path.join(os.path.dirname(os.path.abspath(status_path)), "status.json"))
@@ -216,13 +327,100 @@ def run_pipeline(data_dir, out_dir, pins, embedder, catalog, clip_hash, base_url
             "newSets": summary["newSets"],
             "regression": regression_result and {k: regression_result[k] for k in ("before", "after")},
             "exam": {k: exam[k] for k in ("before", "after", "n")},
-            "shipped": manifest["improved"],
+            "shipped": bool(improved),
+            **({"held": [{k: h[k] for k in ("id", "name", "reason")} for h in hold["held"]]} if hold["held"] else {}),
         })
     return summary
 
 
 def regression_result_n(verdict):
     return verdict["regression"]["n"]
+
+
+def _exam_confident_wrong(verdict):
+    """(before, after) confident-wrong counts of the exam alone, from gate.evaluate's verdict; None when the verdict does not
+    carry two non-negative integers there (the holding rule then fails closed)."""
+    try:
+        counts = verdict["confidentWrong"]["exam"]
+        before, after = counts["before"], counts["after"]
+    except (KeyError, TypeError):
+        return None
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 for v in (before, after)):
+        return None
+    return before, after
+
+
+def _plan_hold(verdict, regression_result, exam, new_cards, hold):
+    """For a cards-only night that failed the replay: {card id: {"rows": set of regression rows, "reasons": [..]}} of the new
+    cards to hold back, or None when nothing may be held (a message says why).
+
+    Only the regression rate (after < before) and the confident-wrong count (after > before) can be blamed; a failing exam
+    holds nothing. Every blamed row's first hit must be one of tonight's new cards (gate.evaluate "blame": (row, first-hit
+    id, reason) for the rows behind a failing measure). At most HOLD_MAX_ROUNDS rounds, at most HOLD_MAX_CARDS held cards in
+    total, and at least one new card must be left."""
+    rate_fail = regression_result["after"] < regression_result["before"]
+    high_fail = verdict["wrongHigh"]["after"] > verdict["wrongHigh"]["before"]
+    if (exam["n"] >= MIN_EXAM_CASES and exam["after"] < exam["before"]) or not (rate_fail or high_fail):
+        return None
+    exam_wrong = _exam_confident_wrong(verdict)
+    if exam_wrong is None:
+        print("not holding any new card: the gate did not report the exam's confident wrong reads")
+        return None
+    if exam_wrong[1] > exam_wrong[0]:
+        print("not holding any new card: the exam itself has more confident wrong reads, which holding a card cannot undo")
+        return None
+    blame = verdict.get("blame")
+    if not blame:
+        print("not holding any new card: no regression row is blamed on one")
+        return None
+    tonight = set(new_cards["added"])
+    stray = sorted({card for _, card, _ in blame if card not in tonight})
+    if stray:
+        print(f"not holding any new card: a failing row's first hit is not one of tonight's new cards ({', '.join(stray[:5])})")
+        return None
+    if hold["round"] >= HOLD_MAX_ROUNDS:
+        print(f"not holding any new card: still failing after {HOLD_MAX_ROUNDS} rounds")
+        return None
+    by_card = {}
+    for row, card, reason in blame:
+        entry = by_card.setdefault(card, {"rows": set(), "reasons": []})
+        entry["rows"].add(row)
+        if reason not in entry["reasons"]:
+            entry["reasons"].append(reason)
+    if len(hold["held"]) + len(by_card) > HOLD_MAX_CARDS:
+        print(f"not holding any new card: that would hold {len(hold['held']) + len(by_card)} cards, the limit is {HOLD_MAX_CARDS}")
+        return None
+    if len(tonight) - len(by_card) < 1:
+        print("not holding any new card: no new card would be left")
+        return None
+    return by_card
+
+
+def _held_records(new_cards, blamed):
+    """[{id, name, set, reason, rows}] for the blamed card ids, from tonight's catalogExtra rows."""
+    by_id = {c["id"]: c for c in read_extra(new_cards["bytes"])[0]}
+    return [
+        {"id": cid, "name": by_id[cid].get("name", cid), "set": by_id[cid].get("set", ""),
+         "reason": " and ".join(HOLD_REASONS[r] for r in entry["reasons"]), "rows": len(entry["rows"])}
+        for cid, entry in sorted(blamed.items())
+    ]
+
+
+def _reduced_new_cards(new_cards, drop):
+    """new_sets.build's result without the cards in `drop`: the part rebuilt from the remaining rows (same tag), and
+    "added", "sets" (of the added cards that remain) and "total" agreeing with it."""
+    cards, rows = read_extra(new_cards["bytes"])
+    keep = [i for i, c in enumerate(cards) if c["id"] not in drop]
+    kept = [cards[i] for i in keep]
+    model, crop = extra_tag(new_cards["bytes"])
+    added = [i for i in new_cards["added"] if i not in drop]
+    return {
+        **new_cards,
+        "bytes": write_extra(kept, rows[keep], None if model is None or crop is None else {"model": model, "crop": crop}),
+        "added": added,
+        "sets": sorted({c["set"] for c in kept if c["id"] in set(added)}),
+        "total": len(kept),
+    }
 
 
 def _extra_count(data):
@@ -334,6 +532,22 @@ def load_live(folder, model, crop):
     return live
 
 
+def load_live_manifest(folder, model, crop):
+    """The live bundle's parsed manifest.json from `folder`, or None when it is missing, unreadable, or for another model
+    or crop (the same bundles load_live ignores). The sign job re-checks it against the published release; this copy
+    only decides whether a re-issue is worth proposing."""
+    if not folder or not os.path.isdir(folder):
+        return None
+    try:
+        with open(os.path.join(folder, "manifest.json"), encoding="utf-8") as f:
+            live_manifest = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(live_manifest, dict) or live_manifest.get("model") != model or live_manifest.get("crop") != crop:
+        return None
+    return live_manifest
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default=".", help="data repo root (holds contributions/)")
@@ -373,7 +587,7 @@ def main(argv=None):
     summary = run_pipeline(
         data_dir=args.data, out_dir=args.out, pins=pins, embedder=embedder, catalog=catalog,
         clip_hash=hashes["clip_visual_int8.onnx"], base_url=args.base_url, seq=args.seq,
-        issued_at=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        live_manifest=load_live_manifest(args.live_dir, model, crop),
         regression=load_regression(args.regression) if os.path.exists(args.regression) and model_tag_ok(args.regression, model, crop) else None,
         live=live, new_sets_fn=new_sets_fn,
         seed_pairs=load_seed(args.seed) if os.path.exists(args.seed) and model_tag_ok(args.seed, model, crop) else [],

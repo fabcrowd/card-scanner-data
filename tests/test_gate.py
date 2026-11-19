@@ -6,6 +6,7 @@ import numpy as np
 import helpers as h
 from pipeline import gate, new_sets
 from pipeline.catalog import Catalog
+from pipeline.names import NameTruth
 from pipeline.pack import write_pack
 from pipeline.train_adapter import pack_adapter
 
@@ -267,6 +268,158 @@ class NewCardRows(unittest.TestCase):
             gate.evaluate({"catalogExtra": b"EXTRA"}, {}, EMPTY, reg, catalog=catalog())
         res = gate.evaluate({}, {"catalogExtra": b"EXTRA"}, EMPTY, reg, catalog=catalog())
         self.assertEqual(res["regression"]["before"], 1.0)
+
+
+def named_extra(vectors, names, ids=None):
+    """A catalogExtra.bin whose rows are the given unit vectors, each card printed with the given name."""
+    ids = ids or [f"n-{i}" for i in range(len(vectors))]
+    cards = [{"id": i, "name": nm, "set": "n", "setName": "N", "number": str(k), "image": "https://assets.tcgdex.net/x"} for k, (i, nm) in enumerate(zip(ids, names))]
+    return new_sets.write_extra(cards, np.rint(np.stack(vectors) * 127).astype(np.int8))
+
+
+class Blame(unittest.TestCase):
+    """evaluate returns (row, first-hit id after, reason) for the rows behind a failing measure; run.py's holding rule reads it."""
+
+    def test_rows_that_a_new_card_takes_are_listed_with_their_first_hit(self):
+        q = blend(0, 1, 0.97)  # the new row ties c-0 closely, so the stolen reads are not "high": only lostRead
+        reg = (np.stack([q] * 3), ["c-0"] * 3)
+        res = gate.evaluate({"catalogExtra": extra_file([q])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(sorted(res["blame"]), [(i, "n-0", "lostRead") for i in range(3)])
+
+    def test_a_confident_wrong_read_a_new_card_causes_is_listed_with_both_reasons(self):
+        crop = h.unit(3, noise=0.05)  # the catalog's c-3 is far from it, so the new row at 1.0 is a clear, high first hit
+        reg = (np.stack([crop, crop]), ["c-3", "c-3"])
+        res = gate.evaluate({"catalogExtra": extra_file([crop])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(sorted(res["blame"]), [(i, "n-0", reason) for i in range(2) for reason in ("confidentWrong", "lostRead")])
+        self.assertEqual(res["wrongHigh"], {"before": 0.0, "after": 1.0})
+
+    def test_the_exams_and_the_regression_sets_confident_wrong_counts_are_reported_separately(self):
+        crop = h.unit(3, noise=0.05)
+        reg = (np.stack([crop, crop]), ["c-3", "c-3"])
+        exam = (np.stack([crop]), ["c-3"])
+        res = gate.evaluate({"catalogExtra": extra_file([crop])}, {}, exam, reg, catalog=catalog())
+        self.assertEqual(res["confidentWrong"], {"regression": {"before": 0, "after": 2}, "exam": {"before": 0, "after": 1}})
+        self.assertEqual(res["wrongHigh"], {"before": 0.0, "after": 1.0})  # still the one combined rate
+        harmless = gate.evaluate({"catalogExtra": extra_file([h.unit(100)])}, {}, exam, reg, catalog=catalog())
+        self.assertEqual(harmless["confidentWrong"], {"regression": {"before": 0, "after": 0}, "exam": {"before": 0, "after": 0}})
+
+    def test_nothing_is_blamed_when_nothing_fails(self):
+        q = blend(0, 1, 0.97)
+        reg = (np.stack([q] * 3), ["c-0"] * 3)
+        res = gate.evaluate({"catalogExtra": extra_file([h.unit(100)])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["blame"], [])
+        self.assertEqual(gate.evaluate({}, {}, EMPTY, reg, catalog=catalog())["blame"], [])
+
+    def test_a_wrong_read_that_was_already_there_is_not_blamed_on_a_harmless_card(self):
+        reg = (np.stack([blend(0, 1, 0.97)] * 3), ["c-1"] * 3)  # wrong and confident before and after
+        res = gate.evaluate({"catalogExtra": extra_file([h.unit(100)])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["blame"], [])
+
+    def test_the_live_bundles_rows_are_not_new_but_their_first_hits_are_still_reported_when_they_fail(self):
+        q = blend(0, 1, 0.97)
+        reg = (np.stack([q]), ["c-0"])
+        res = gate.evaluate({"catalogExtra": extra_file([q], ["n-0"])}, {"catalogExtra": extra_file([h.unit(100)], ["n-9"])}, EMPTY, reg, catalog=catalog())
+        self.assertEqual({(i, hit) for i, hit, _ in res["blame"]}, {(0, "n-0")})  # run.py decides whether the id is tonight's
+
+    def test_a_lost_read_is_not_listed_when_another_row_made_the_rate_whole(self):
+        a, b = blend(0, 1, 0.97), blend(2, 3, 0.6)
+        reg = (np.stack([a, b]), ["c-0", "n-1"])  # row 0 is stolen by n-0, row 1 is gained through n-1
+        res = gate.evaluate({"catalogExtra": extra_file([a, b])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"]["before"], res["regression"]["after"])
+        self.assertNotIn("lostRead", {reason for _, _, reason in res["blame"]})
+
+
+class OldFormatFiles(unittest.TestCase):
+    def test_an_old_id_file_scores_exactly_as_it_did_before_name_rows_existed(self):
+        import os
+        import tempfile
+
+        from pipeline.regression import load_regression, save_regression
+
+        q = [blend(0, 1, 0.6)] * 3 + [blend(0, 1, 0.97)] * 2 + [blend(2, 3, 0.8)]
+        truths = ["c-0", "c-0", "c-1", "c-1", "c-1", "c-3"]
+        extra = extra_file([blend(0, 1, 0.6), h.unit(100)])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "r.npz")
+            save_regression(path, np.stack(q), truths)
+            reg = load_regression(path)
+        res = gate.evaluate({"catalogExtra": extra}, {}, EMPTY, reg, catalog=catalog())
+        # Captured from the code as it was before name rows were added.
+        self.assertEqual(res, {
+            "improved": False,
+            # added with the holding rule; not part of the scoring the old file is pinned for
+            "blame": [(0, "n-0", "confidentWrong"), (0, "n-0", "lostRead"), (1, "n-0", "confidentWrong"), (1, "n-0", "lostRead")],
+            "confidentWrong": {"regression": {"before": 4, "after": 6}, "exam": {"before": 0, "after": 0}},  # also added with the rule
+            "newCards": {"firstHit": {"before": 0, "after": 3}, "lost": 2, "gained": 0},
+            "regression": {"before": 0.3333, "after": 0.0, "n": 6},
+            "exam": {"before": 0.0, "after": 0.0, "n": 0},
+            "wrongHigh": {"before": 0.6667, "after": 1.0},
+            "outcomes": {
+                "regression": {"before": {"acceptedRight": 2, "acceptedWrong": 4, "abstained": 0, "n": 6},
+                               "after": {"acceptedRight": 0, "acceptedWrong": 6, "abstained": 0, "n": 6}},
+                "exam": {"before": {"acceptedRight": 0, "acceptedWrong": 0, "abstained": 0, "n": 0},
+                         "after": {"acceptedRight": 0, "acceptedWrong": 0, "abstained": 0, "n": 0}},
+            },
+        })
+
+
+class NameRows(unittest.TestCase):
+    """A name-labelled regression row is right when the first hit is an accepted id or a new card with the row's base name."""
+
+    def crops(self, truth, n=5):
+        return np.stack([blend(0, 1, 0.97)] * n), [truth] * n  # the catalog answers c-0, clearly and with a high score
+
+    def test_a_name_row_is_right_through_an_accept_id(self):
+        reg = self.crops(NameTruth("zero", frozenset({"c-0", "c-9"})))
+        res = gate.evaluate({}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 1.0, "after": 1.0, "n": 5})
+        self.assertEqual(res["wrongHigh"], {"before": 0.0, "after": 0.0})
+        self.assertEqual(res["outcomes"]["regression"]["after"]["acceptedRight"], 5)
+
+    def test_a_name_row_whose_accept_list_misses_the_first_hit_is_wrong_and_a_wrong_high_read(self):
+        reg = self.crops(NameTruth("zero", frozenset({"c-2"})))
+        res = gate.evaluate({}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 0.0, "after": 0.0, "n": 5})
+        self.assertEqual(res["wrongHigh"], {"before": 1.0, "after": 1.0})
+        self.assertEqual(res["outcomes"]["regression"]["after"]["acceptedWrong"], 5)
+
+    def test_a_name_row_is_right_through_a_new_card_with_the_same_base_name(self):
+        reg = self.crops(NameTruth("brand new", frozenset()))
+        extra = named_extra([reg[0][0]], ["Brand New ex"])
+        res = gate.evaluate({"catalogExtra": extra}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 0.0, "after": 1.0, "n": 5})
+        self.assertEqual(res["newCards"], {"firstHit": {"before": 0, "after": 5}, "lost": 0, "gained": 5})
+
+    def test_a_new_card_with_another_name_that_becomes_the_first_hit_makes_the_row_wrong(self):
+        reg = self.crops(NameTruth("zero", frozenset({"c-0"})))
+        extra = named_extra([reg[0][0]], ["Somebody Else"])
+        res = gate.evaluate({"catalogExtra": extra}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 1.0, "after": 0.0, "n": 5})
+        self.assertEqual(res["newCards"], {"firstHit": {"before": 0, "after": 5}, "lost": 5, "gained": 0})
+        self.assertEqual(res["wrongHigh"]["before"], 0.0)
+        self.assertFalse(res["improved"])
+
+    def test_a_name_row_with_an_accept_list_is_wrong_and_confident_wrong_when_a_new_card_with_another_name_takes_it_high(self):
+        crop = h.unit(3, noise=0.05)  # far from every catalog card; a new row at 1.0 is a clear, high first hit
+        reg = (np.stack([crop, crop]), [NameTruth("three", frozenset({"c-3"}))] * 2)
+        res = gate.evaluate({"catalogExtra": named_extra([crop], ["Somebody Else"])}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 1.0, "after": 0.0, "n": 2})
+        self.assertEqual(res["wrongHigh"], {"before": 0.0, "after": 1.0})
+        self.assertEqual(res["confidentWrong"]["regression"], {"before": 0, "after": 2})
+        self.assertIn((0, "n-0", "confidentWrong"), res["blame"])
+
+    def test_the_live_bundles_same_name_row_counts_for_before(self):
+        reg = self.crops(NameTruth("brand new", frozenset()))
+        file = named_extra([reg[0][0]], ["Brand New"])
+        res = gate.evaluate({"catalogExtra": file}, {"catalogExtra": file}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 1.0, "after": 1.0, "n": 5})
+        self.assertEqual((res["newCards"]["lost"], res["newCards"]["gained"]), (0, 0))
+
+    def test_id_rows_and_name_rows_mix_in_one_set(self):
+        q = blend(0, 1, 0.97)
+        reg = (np.stack([q, q]), ["c-1", NameTruth("zero", frozenset({"c-0"}))])
+        res = gate.evaluate({}, {}, EMPTY, reg, catalog=catalog())
+        self.assertEqual(res["regression"], {"before": 0.5, "after": 0.5, "n": 2})
 
 
 if __name__ == "__main__":
